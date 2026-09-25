@@ -29,8 +29,8 @@ read. Password managers' copies are never synced.
 
 ## Install
 
-Download from [Releases](../../releases), or the artifacts of any
-[build](../../actions/workflows/build.yml):
+Download from [Releases](https://github.com/TheFormOfVoid/VoidBridge/releases), or the artifacts of any
+[build](https://github.com/TheFormOfVoid/VoidBridge/actions/workflows/build.yml):
 
 - **Windows:** `VoidBridge-windows-amd64.exe` (use `arm64` for ARM laptops).
 - **Android:** `VoidBridge-android.apk` (Android 8+).
