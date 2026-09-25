@@ -53,7 +53,6 @@ jobs:
         with:
           go-version-file: pc/go.mod
           cache-dependency-path: pc/go.sum
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Start PC app for the interop test
