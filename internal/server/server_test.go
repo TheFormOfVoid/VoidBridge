@@ -17,13 +17,16 @@ import (
 
 func init() { node.PollInterval = 10 * time.Millisecond }
 
+// quiet is used for loggers in goroutines that can outlive a test.
+func quiet(string, ...any) {}
+
 func setup(t *testing.T) (*server.Server, string) {
 	st, err := server.OpenStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := server.New(st, server.SignupInvite)
-	s.Logf = t.Logf
+	s.Logf = quiet
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
 	return s, ts.URL
@@ -46,9 +49,9 @@ func connect(t *testing.T, base, user, pass, id string) *device {
 	}
 	d := &device{cb: &clipboard.Memory{}, stop: make(chan struct{})}
 	d.n = node.New(me, keys, d.cb, nil)
-	d.n.Logf = t.Logf
+	d.n.Logf = quiet
 	go d.n.Run(d.stop)
-	go (&relay.Client{Base: base, Token: api.Token, Node: d.n, Logf: t.Logf}).Run(d.stop)
+	go (&relay.Client{Base: base, Token: api.Token, Node: d.n, Logf: quiet}).Run(d.stop)
 	t.Cleanup(func() { close(d.stop) })
 	return d
 }
@@ -158,7 +161,7 @@ func TestRevokeKicks(t *testing.T) {
 func TestServerPlusDirectFallback(t *testing.T) {
 	st, _ := server.OpenStore(t.TempDir())
 	s := server.New(st, server.SignupInvite)
-	s.Logf = t.Logf
+	s.Logf = quiet
 	ts := httptest.NewServer(s)
 	base := ts.URL
 	(&relay.API{Base: base}).Register("alice", keys("alice", "pw"), "", protocol.Identity{ID: "setup"})
@@ -168,9 +171,9 @@ func TestServerPlusDirectFallback(t *testing.T) {
 	// Also link them directly, as they would be on the same Wi-Fi.
 	k := keys("alice", "pw")
 	mPC := peer.NewManager(pc.n, k, 0)
-	mPC.Discovery, mPC.Logf = false, t.Logf
+	mPC.Discovery, mPC.Logf = false, quiet
 	mPhone := peer.NewManager(phone.n, k, 0)
-	mPhone.Discovery, mPhone.Logf = false, t.Logf
+	mPhone.Discovery, mPhone.Logf = false, quiet
 	go mPC.Run(pc.stop)
 	go mPhone.Run(phone.stop)
 	eventually(t, func() bool { return mPC.Addr() != nil })
