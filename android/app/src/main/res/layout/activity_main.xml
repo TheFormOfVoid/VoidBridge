@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textAppearance="@android:style/TextAppearance.Material.Headline" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:drawablePadding="8dp"
+            android:textAppearance="@android:style/TextAppearance.Material.Subhead" />
+
+        <!-- Pairing -->
+        <TextView
+            style="@style/Section"
+            android:text="@string/section_pair" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pair_help" />
+
+        <EditText
+            android:id="@+id/code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/code_hint"
+            android:importantForAutofill="no"
+            android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+            android:fontFamily="monospace"
+            android:maxLength="24" />
+
+        <EditText
+            android:id="@+id/host"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/host_hint"
+            android:importantForAutofill="no"
+            android:inputType="textUri" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/pair"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/pair" />
+
+            <Button
+                android:id="@+id/toggle"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/stop" />
+        </LinearLayout>
+
+        <!-- Setup checklist -->
+        <TextView
+            style="@style/Section"
+            android:text="@string/section_setup" />
+
+        <TextView
+            android:id="@+id/notif_text"
+            style="@style/StepText"
+            android:text="@string/step_notifications" />
+        <Button
+            android:id="@+id/notif_btn"
+            style="@style/StepButton"
+            android:text="@string/allow" />
+
+        <TextView
+            android:id="@+id/battery_text"
+            style="@style/StepText"
+            android:text="@string/step_battery" />
+        <Button
+            android:id="@+id/battery_btn"
+            style="@style/StepButton"
+            android:text="@string/allow" />
+
+        <TextView
+            android:id="@+id/overlay_text"
+            style="@style/StepText"
+            android:text="@string/step_overlay" />
+        <Button
+            android:id="@+id/overlay_btn"
+            style="@style/StepButton"
+            android:text="@string/allow" />
+
+        <TextView
+            android:id="@+id/logs_text"
+            style="@style/StepText"
+            android:text="@string/step_logs" />
+        <TextView
+            android:id="@+id/adb_cmd"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="#22888888"
+            android:fontFamily="monospace"
+            android:padding="8dp"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+        <Button
+            android:id="@+id/logs_btn"
+            style="@style/StepButton"
+            android:text="@string/copy_command" />
+
+        <TextView
+            style="@style/Section"
+            android:text="@string/section_manual" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/manual_help" />
+    </LinearLayout>
+</ScrollView>

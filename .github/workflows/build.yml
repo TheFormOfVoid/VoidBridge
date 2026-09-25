@@ -1,0 +1,120 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # for publishing releases on tags
+
+jobs:
+  pc:
+    name: PC app (Windows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pc/go.mod
+          cache-dependency-path: pc/go.sum
+      - name: Test
+        working-directory: pc
+        run: |
+          go vet ./...
+          GOOS=windows go vet ./...
+          go test -race ./...
+      - name: Build
+        working-directory: pc
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build \
+              -trimpath -ldflags "-H windowsgui -s -w -X main.version=$VERSION" \
+              -o ../dist/VoidBridge-windows-$arch.exe ./cmd/voidbridge
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoidBridge-windows
+          path: dist/*.exe
+
+  android:
+    name: Android app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pc/go.mod
+          cache-dependency-path: pc/go.sum
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Start PC app for the interop test
+        run: |
+          cd pc && go build -o /tmp/voidbridge-pc ./cmd/voidbridge
+          export XDG_CONFIG_HOME=/tmp/vbcfg
+          /tmp/voidbridge-pc -code > /dev/null   # creates the config
+          /tmp/voidbridge-pc -headless > /tmp/pc.log 2>&1 &
+          sleep 1
+          echo "VOIDBRIDGE_PC_ADDR=127.0.0.1:47829" >> "$GITHUB_ENV"
+          echo "VOIDBRIDGE_PC_CODE=$(python3 -c "import json;print(json.load(open('/tmp/vbcfg/VoidBridge/config.json'))['pairing_code'])")" >> "$GITHUB_ENV"
+
+      - name: Set up release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.VOIDBRIDGE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.VOIDBRIDGE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.VOIDBRIDGE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.VOIDBRIDGE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.jks
+            {
+              echo "VOIDBRIDGE_KEYSTORE_PATH=/tmp/release.jks"
+              echo "VOIDBRIDGE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "VOIDBRIDGE_KEY_ALIAS=$KEY_ALIAS"
+              echo "VOIDBRIDGE_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing secrets set; the APK is signed with a throwaway debug key, so updates will need an uninstall first. See README."
+          fi
+
+      - name: Test and build
+        working-directory: android
+        env:
+          VOIDBRIDGE_VERSION_CODE: ${{ github.run_number }}
+          VOIDBRIDGE_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('0.1.0-{0}', github.run_number) }}
+        run: ./gradlew --no-daemon :core:test :app:assembleRelease
+
+      - name: PC log from interop test
+        if: always()
+        run: cat /tmp/pc.log || true
+
+      - run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/VoidBridge-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoidBridge-android
+          path: dist/*.apk
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [pc, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -1,0 +1,15 @@
+# Go
+/dist/
+*.exe
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+*.jks
+*.keystore
+captures/
+.externalNativeBuild/
+.cxx/

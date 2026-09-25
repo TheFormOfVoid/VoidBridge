@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoidBridge</string>
+    <string name="share_label">Send to PC clipboard</string>
+    <string name="tile_label">Send clipboard</string>
+    <string name="channel_name">Clipboard sync</string>
+    <string name="action_send">Send clipboard now</string>
+
+    <string name="status_starting">Starting…</string>
+    <string name="status_searching">Looking for your PC…</string>
+    <string name="status_connecting">Connecting to %1$s…</string>
+    <string name="status_connected">Connected to %1$s</string>
+    <string name="status_stopped">Not syncing</string>
+    <string name="status_unpaired">Not paired yet</string>
+    <string name="not_running">VoidBridge isn\'t running. Open the app to start it.</string>
+    <string name="sent">Sent to PC</string>
+
+    <string name="section_pair">Pair with your PC</string>
+    <string name="pair_help">Run VoidBridge on your PC, click its tray icon → “Pair a phone…”, and type the code shown there.</string>
+    <string name="code_hint">XXXX-XXXX-XXXX-XXXX</string>
+    <string name="host_hint">PC address (optional, e.g. 192.168.1.20)</string>
+    <string name="pair">Pair</string>
+    <string name="pairing">Pairing…</string>
+    <string name="repair">Save</string>
+    <string name="bad_code">That code should be 16 letters/digits, like ABCD-EFGH-2345-WXYZ.</string>
+    <string name="stop">Stop syncing</string>
+    <string name="start">Start syncing</string>
+
+    <string name="section_setup">Setup checklist</string>
+    <string name="allow">Allow</string>
+    <string name="done">Done ✓</string>
+    <string name="step_notifications">1. Notifications: required to keep syncing in the background.</string>
+    <string name="step_battery">2. Unrestricted battery: stops Android from cutting the connection while the screen is off.</string>
+    <string name="step_overlay">3. Display over other apps: lets VoidBridge read what you copy on the phone without you opening it.</string>
+    <string name="step_logs">4. One-time computer step for automatic phone → PC sync. With USB debugging on, run this once on your PC (needs adb). On Android 13 and later, also tap “Allow” if asked about device logs.</string>
+    <string name="step_logs_done">4. Automatic phone → PC sync is enabled. (If it stops working after a restart on Android 13+, open this app once.)</string>
+    <string name="step_logs_old">4. Automatic phone → PC sync works out of the box on this Android version.</string>
+    <string name="copy_command">Copy command</string>
+    <string name="copied">Copied. It\'s on your PC clipboard too if you\'re connected.</string>
+
+    <string name="section_manual">Without step 4</string>
+    <string name="manual_help">PC → phone is always automatic. For phone → PC you can still use the “Send clipboard” Quick Settings tile, the button in the VoidBridge notification, or Share → “Send to PC clipboard”.</string>
+</resources>
