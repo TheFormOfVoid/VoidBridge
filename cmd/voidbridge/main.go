@@ -1,100 +1,32 @@
-// Command voidbridge is the PC side of VoidBridge: a tray app that keeps the
-// Windows clipboard in sync with paired Android phones.
+// Command voidbridge is the Windows desktop app: a window for setup, history
+// and phone setup, plus a tray icon, around the VoidBridge sync engine.
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"image/color"
 	"io"
 	"log"
-	"net"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
-	"time"
 
 	"fyne.io/systray"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
-	"github.com/TheFormOfVoid/VoidBridge/internal/clipboard"
 	"github.com/TheFormOfVoid/VoidBridge/internal/config"
-	"github.com/TheFormOfVoid/VoidBridge/internal/discovery"
-	"github.com/TheFormOfVoid/VoidBridge/internal/engine"
-	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 )
 
 var version = "dev"
 
-// app owns the running engine and lets the tray restart it with a new code.
-type app struct {
-	mu      sync.Mutex
-	cfg     *config.Config
-	eng     *engine.Engine
-	stop    chan struct{}
-	logPath string
-	onState func(engine.Status)
-}
-
-func (a *app) start() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", a.cfg.Port))
-	if err != nil {
-		return err
-	}
-	key := protocol.DeriveKey(a.cfg.PairingCode)
-	host, _ := os.Hostname()
-	e := engine.New(clipboard.System(), key, protocol.Identity{ID: a.cfg.DeviceID, Name: host})
-	e.OnStatus = a.onState
-	a.eng = e
-	a.stop = make(chan struct{})
-	go e.Run(ln, a.stop)
-	go discovery.Announce(discovery.Beacon{
-		ID: a.cfg.DeviceID, Name: host, Port: a.cfg.Port, Fingerprint: discovery.Fingerprint(key),
-	}, a.stop, log.Printf)
-	log.Printf("listening on :%d (addresses: %s)", a.cfg.Port, strings.Join(discovery.LocalIPs(), ", "))
-	return nil
-}
-
-func (a *app) shutdown() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.stop != nil {
-		close(a.stop)
-		a.stop = nil
-	}
-}
-
-func (a *app) newCode() error {
-	a.shutdown()
-	a.mu.Lock()
-	a.cfg.PairingCode = protocol.NewPairingCode()
-	err := a.cfg.Save()
-	a.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	// Give the old listener a moment to release the port.
-	time.Sleep(200 * time.Millisecond)
-	return a.start()
-}
-
-func (a *app) pairingInfo() string {
-	host, _ := os.Hostname()
-	ips := discovery.LocalIPs()
-	if len(ips) == 0 {
-		ips = []string{"(no network)"}
-	}
-	return fmt.Sprintf("Enter this pairing code in the VoidBridge app on your phone:\n\n"+
-		"        %s\n\n"+
-		"The phone normally finds this PC (%s) automatically. If it doesn't, "+
-		"enter one of these addresses in the app:\n\n        %s  (port %d)\n\n"+
-		"If Windows Firewall asked about VoidBridge, allow it on private networks.",
-		a.cfg.PairingCode, host, strings.Join(ips, "\n        "), a.cfg.Port)
-}
+//go:embed all:frontend
+var assets embed.FS
 
 func setupLog() string {
 	dir, err := config.Dir()
@@ -102,7 +34,7 @@ func setupLog() string {
 		return ""
 	}
 	p := filepath.Join(dir, "voidbridge.log")
-	if fi, err := os.Stat(p); err == nil && fi.Size() > 1<<20 {
+	if fi, err := os.Stat(p); err == nil && fi.Size() > 2<<20 {
 		os.Rename(p, p+".old")
 	}
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -114,127 +46,126 @@ func setupLog() string {
 }
 
 func main() {
-	headless := flag.Bool("headless", false, "run without a tray icon (logs to the console)")
-	showCode := flag.Bool("code", false, "print the pairing code and exit")
+	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
 	flag.Parse()
 
 	logPath := setupLog()
 	log.Printf("VoidBridge %s starting (%s/%s)", version, runtime.GOOS, runtime.GOARCH)
-
 	cfg, err := config.Load()
 	if err != nil {
 		showMessage("VoidBridge", "Could not load settings: "+err.Error())
 		os.Exit(1)
 	}
-	a := &app{cfg: cfg, logPath: logPath}
-	if *showCode {
-		fmt.Println(a.pairingInfo())
-		return
+	first := cfg.Mode == config.ModeNone
+	if first && !autostartEnabled() && os.Getenv("VOIDBRIDGE_NO_AUTOSTART") == "" {
+		setAutostart(true) // on by default; one click to turn off in Settings
 	}
 
-	if *headless {
-		a.onState = func(s engine.Status) { log.Printf("status: %s", describe(s)) }
-		if err := a.start(); err != nil {
-			log.Fatalf("cannot listen on port %d: %v (is VoidBridge already running?)", cfg.Port, err)
-		}
-		fmt.Println(a.pairingInfo())
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt)
-		<-sig
-		a.shutdown()
-		return
-	}
+	svc := NewService(cfg)
+	app := NewApp(cfg, svc, logPath)
+	go runTray(app)
 
-	systray.Run(func() { a.onTrayReady() }, a.shutdown)
+	err = wails.Run(&options.App{
+		Title:             "VoidBridge",
+		Width:             1000,
+		Height:            700,
+		MinWidth:          780,
+		MinHeight:         540,
+		StartHidden:       *hidden && !first,
+		HideWindowOnClose: true,
+		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		AssetServer:       &assetserver.Options{Assets: assets},
+		OnStartup:         app.startup,
+		Bind:              []any{app},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "com.theformofvoid.voidbridge",
+			OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.Show() },
+		},
+		Windows: &windows.Options{
+			WebviewIsTransparent: true,
+			WindowIsTranslucent:  true,
+			BackdropType:         windows.Mica,
+			Theme:                windows.SystemDefault,
+		},
+	})
+	if err != nil {
+		showMessage("VoidBridge", "VoidBridge could not start its window: "+err.Error()+
+			"\n\nIt needs the Microsoft Edge WebView2 runtime, which is built into Windows 11 and current Windows 10.")
+		log.Fatal(err)
+	}
+	systray.Quit()
 }
 
-func describe(s engine.Status) string {
-	switch {
-	case len(s.Peers) > 0:
-		names := make([]string, len(s.Peers))
-		for i, p := range s.Peers {
-			names[i] = p.Name
-		}
-		return "Connected to " + strings.Join(names, ", ")
-	case s.LastError != "":
-		return s.LastError
-	case s.Listening:
-		return "Waiting for phone…"
-	default:
-		return "Not running"
-	}
-}
+// runTray shows the tray icon. Left-click opens the window; right-click shows
+// the menu.
+func runTray(app *App) {
+	runtime.LockOSThread()
+	systray.Run(func() {
+		ico := runtime.GOOS == "windows"
+		iconOn := makeIcon(color.NRGBA{0x7c, 0x5c, 0xff, 0xff}, ico)
+		iconOff := makeIcon(color.NRGBA{0x80, 0x80, 0x80, 0xff}, ico)
+		iconPaused := makeIcon(color.NRGBA{0xe0, 0xa0, 0x30, 0xff}, ico)
+		systray.SetIcon(iconOff)
+		systray.SetTooltip("VoidBridge")
+		systray.SetOnTapped(app.Show)
 
-func (a *app) onTrayReady() {
-	ico := runtime.GOOS == "windows"
-	iconOn := makeIcon(color.NRGBA{0x7c, 0x5c, 0xff, 0xff}, ico)
-	iconOff := makeIcon(color.NRGBA{0x80, 0x80, 0x80, 0xff}, ico)
+		mOpen := systray.AddMenuItem("Open VoidBridge", "")
+		mStatus := systray.AddMenuItem("Starting…", "")
+		mStatus.Disable()
+		systray.AddSeparator()
+		mPause := systray.AddMenuItemCheckbox("Pause syncing", "", app.cfg.Paused)
+		systray.AddSeparator()
+		mQuit := systray.AddMenuItem("Quit VoidBridge", "")
 
-	systray.SetIcon(iconOff)
-	systray.SetTitle("")
-	systray.SetTooltip("VoidBridge")
-
-	mStatus := systray.AddMenuItem("Starting…", "")
-	mStatus.Disable()
-	systray.AddSeparator()
-	mPair := systray.AddMenuItem("Pair a phone…", "Show the pairing code")
-	mNewCode := systray.AddMenuItem("Reset pairing code", "Unpair all phones and make a new code")
-	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostartEnabled())
-	mLog := systray.AddMenuItem("Open log", "")
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit", "")
-
-	a.onState = func(s engine.Status) {
-		text := describe(s)
-		mStatus.SetTitle(text)
-		systray.SetTooltip("VoidBridge — " + text)
-		if len(s.Peers) > 0 {
-			systray.SetIcon(iconOn)
-		} else {
-			systray.SetIcon(iconOff)
-		}
-	}
-
-	if err := a.start(); err != nil {
-		mStatus.SetTitle("Error: port in use")
-		showMessage("VoidBridge", fmt.Sprintf("VoidBridge can't listen on port %d: %v\n\nIt is probably already running (check the tray).", a.cfg.Port, err))
-		systray.Quit()
-		return
-	}
-	if !autostartEnabled() && os.Getenv("VOIDBRIDGE_NO_AUTOSTART") == "" {
-		// First run: start with Windows by default; the menu can turn it off.
-		if setAutostart(true) == nil {
-			mAuto.Check()
-		}
-		go showMessage("VoidBridge", a.pairingInfo())
-	}
-
-	go func() {
-		for {
-			select {
-			case <-mPair.ClickedCh:
-				go showMessage("VoidBridge — pair a phone", a.pairingInfo())
-			case <-mNewCode.ClickedCh:
-				if err := a.newCode(); err != nil {
-					go showMessage("VoidBridge", "Could not reset the code: "+err.Error())
-				} else {
-					go showMessage("VoidBridge — new pairing code", a.pairingInfo())
-				}
-			case <-mAuto.ClickedCh:
-				want := !mAuto.Checked()
-				if err := setAutostart(want); err != nil {
-					go showMessage("VoidBridge", err.Error())
-				} else if want {
-					mAuto.Check()
-				} else {
-					mAuto.Uncheck()
-				}
-			case <-mLog.ClickedCh:
-				openFile(a.logPath)
-			case <-mQuit.ClickedCh:
-				systray.Quit()
-				return
+		app.onState = func(st State) {
+			text := describe(st)
+			mStatus.SetTitle(text)
+			systray.SetTooltip("VoidBridge — " + text)
+			switch {
+			case st.Paused:
+				systray.SetIcon(iconPaused)
+			case len(st.Devices) > 0:
+				systray.SetIcon(iconOn)
+			default:
+				systray.SetIcon(iconOff)
+			}
+			if st.Paused {
+				mPause.Check()
+			} else {
+				mPause.Uncheck()
 			}
 		}
-	}()
+		go func() {
+			for {
+				select {
+				case <-mOpen.ClickedCh:
+					app.Show()
+				case <-mPause.ClickedCh:
+					app.SetPaused(!app.cfg.Paused)
+				case <-mQuit.ClickedCh:
+					app.Quit()
+					return
+				}
+			}
+		}()
+	}, nil)
+}
+
+func describe(st State) string {
+	switch {
+	case st.Mode == config.ModeNone:
+		return "Not set up yet"
+	case st.Paused:
+		return "Paused"
+	case len(st.Devices) == 1:
+		return "Syncing with " + st.Devices[0].Name
+	case len(st.Devices) > 1:
+		names := make([]string, len(st.Devices))
+		for i, d := range st.Devices {
+			names[i] = d.Name
+		}
+		return fmt.Sprintf("Syncing with %d devices (%s)", len(st.Devices), strings.Join(names, ", "))
+	default:
+		return "Waiting for your other devices"
+	}
 }

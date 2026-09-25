@@ -1,27 +1,51 @@
-// Package config loads and saves the PC app's settings.
+// Package config loads and saves the desktop app's settings.
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 )
 
-const DefaultPort = 47829
+// Group modes.
+const (
+	ModeNone    = ""
+	ModeCode    = "code"    // serverless group joined with a code
+	ModeAccount = "account" // account on a VoidBridge server
+)
 
-// Config is persisted as JSON in the user's config directory.
+// Config is persisted as JSON in %APPDATA%\VoidBridge.
 type Config struct {
-	DeviceID    string `json:"device_id"`
-	PairingCode string `json:"pairing_code"`
-	Port        int    `json:"port"`
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name,omitempty"` // empty = computer name
+
+	Mode string `json:"mode"`
+	Code string `json:"code,omitempty"` // ModeCode: shown so more devices can join
+	// The group master key, protected with Windows DPAPI where available.
+	MasterKey string `json:"master_key,omitempty"`
+
+	Server   string `json:"server,omitempty"` // ModeAccount
+	Username string `json:"username,omitempty"`
+	Token    string `json:"token,omitempty"`
+	Admin    bool   `json:"admin,omitempty"`
+
+	Direct    bool     `json:"direct"`    // link to devices on Wi-Fi / Tailscale directly
+	Tailscale bool     `json:"tailscale"` // look for devices among Tailscale peers
+	Manual    []string `json:"manual,omitempty"`
+
+	Paused        bool `json:"paused"`
+	SkipSensitive bool `json:"skip_sensitive"`
+	History       bool `json:"history"`
+	Port          int  `json:"port"`
+
+	mu sync.Mutex
 }
 
-// Dir returns (and creates) the VoidBridge settings directory,
-// %APPDATA%\VoidBridge on Windows.
+// Dir returns (and creates) the settings directory.
 func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -36,35 +60,30 @@ func path() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "config.json"), nil
+	return filepath.Join(d, "settings.json"), nil
 }
 
-// Load reads the config, filling in and saving defaults for anything missing.
+// Load reads the config, filling in defaults.
 func Load() (*Config, error) {
 	p, err := path()
 	if err != nil {
 		return nil, err
 	}
-	c := &Config{}
-	if b, err := os.ReadFile(p); err == nil {
-		json.Unmarshal(b, c)
+	c := &Config{Direct: true, Tailscale: true, SkipSensitive: true, History: true}
+	b, err := os.ReadFile(p)
+	fresh := os.IsNotExist(err)
+	if err == nil {
+		if err := json.Unmarshal(b, c); err != nil {
+			return nil, err
+		}
 	}
-	dirty := false
 	if c.DeviceID == "" {
-		b := make([]byte, 8)
-		rand.Read(b)
-		c.DeviceID = "pc-" + hex.EncodeToString(b)
-		dirty = true
-	}
-	if !protocol.ValidCode(c.PairingCode) {
-		c.PairingCode = protocol.NewPairingCode()
-		dirty = true
+		c.DeviceID = "pc-" + protocol.NewID()
 	}
 	if c.Port == 0 {
-		c.Port = DefaultPort
-		dirty = true
+		c.Port = protocol.PeerPort
 	}
-	if dirty {
+	if fresh {
 		return c, c.Save()
 	}
 	return c, nil
@@ -72,6 +91,8 @@ func Load() (*Config, error) {
 
 // Save writes the config atomically.
 func (c *Config) Save() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	p, err := path()
 	if err != nil {
 		return err
@@ -82,4 +103,36 @@ func (c *Config) Save() error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// Keys returns the group keys, or false if not in a group.
+func (c *Config) Keys() (protocol.Keys, bool) {
+	if c.Mode == ModeNone || c.MasterKey == "" {
+		return protocol.Keys{}, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(c.MasterKey)
+	if err != nil {
+		return protocol.Keys{}, false
+	}
+	master, err := unprotect(raw)
+	if err != nil || len(master) != 32 {
+		return protocol.Keys{}, false
+	}
+	return protocol.KeysFromMaster(master), true
+}
+
+// SetMaster stores the master key.
+func (c *Config) SetMaster(master []byte) error {
+	p, err := protect(master)
+	if err != nil {
+		return err
+	}
+	c.MasterKey = base64.StdEncoding.EncodeToString(p)
+	return nil
+}
+
+// Leave forgets the group.
+func (c *Config) Leave() {
+	c.Mode, c.Code, c.MasterKey = ModeNone, "", ""
+	c.Server, c.Username, c.Token, c.Admin = "", "", "", false
 }

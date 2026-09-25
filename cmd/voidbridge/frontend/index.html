@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoidBridge</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="16" cy="16" r="5.5" fill="currentColor"/></svg>
+      <span>VoidBridge</span>
+    </div>
+    <nav id="nav">
+      <button data-page="devices" class="active"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H4z M2 18h20" /></svg><span>Devices</span></button>
+      <button data-page="history"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9z M7 6H5v15h14V6h-2 M8 12h8 M8 16h5" /></svg><span>Clipboard history</span></button>
+      <button data-page="connect"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg><span>Connections</span></button>
+      <button data-page="phone"><svg viewBox="0 0 24 24"><path d="M8 2h8a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M11 19h2" /></svg><span>Phone setup</span></button>
+      <button data-page="server" id="nav-server" hidden><svg viewBox="0 0 24 24"><path d="M4 4h16v6H4z M4 14h16v6H4z M7 7h.01 M7 17h.01" /></svg><span>Server</span></button>
+      <button data-page="settings"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg><span>Settings</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <label class="switch-row" title="Temporarily stop sending and receiving">
+        <span>Sync</span>
+        <input type="checkbox" id="sync-toggle" class="switch" checked>
+      </label>
+      <div id="foot-status" class="muted small"></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <!-- Devices -->
+    <section class="page" id="page-devices">
+      <header class="hero" id="hero"></header>
+      <div id="setup-callout"></div>
+      <h2 class="section-title">This computer</h2>
+      <div class="cards" id="this-device"></div>
+      <h2 class="section-title">Other devices <span class="count" id="device-count"></span></h2>
+      <div class="cards" id="device-list"></div>
+      <div id="latest"></div>
+    </section>
+
+    <!-- History -->
+    <section class="page" id="page-history" hidden>
+      <header class="page-head">
+        <div>
+          <h1>Clipboard history</h1>
+          <p class="muted">Everything copied on any of your devices. Click an item to copy it again, everywhere.</p>
+        </div>
+        <div class="head-actions">
+          <input type="search" id="history-search" placeholder="Search" aria-label="Search history">
+          <button class="btn subtle" id="history-clear">Clear</button>
+        </div>
+      </header>
+      <div id="history-list" class="history"></div>
+    </section>
+
+    <!-- Connections -->
+    <section class="page" id="page-connect" hidden>
+      <header class="page-head"><div><h1>Connections</h1><p class="muted">How your devices find each other. You can use a server, direct links, or both.</p></div></header>
+      <div id="group-card"></div>
+      <h2 class="section-title">Direct links</h2>
+      <div class="panel">
+        <label class="setting">
+          <div><b>Connect directly on the same network</b><p class="muted">Devices on your Wi-Fi find each other automatically. With a server, this keeps sync working at home even if the server is down.</p></div>
+          <input type="checkbox" class="switch" id="set-direct">
+        </label>
+        <label class="setting">
+          <div><b>Use Tailscale</b><p class="muted" id="ts-hint">Also look for your devices over Tailscale, so sync works away from home without a server.</p></div>
+          <input type="checkbox" class="switch" id="set-tailscale">
+        </label>
+        <div class="setting column">
+          <div><b>Device addresses</b><p class="muted">Only needed if a device isn't found automatically (e.g. a phone on Tailscale). Enter its IP or Tailscale name.</p></div>
+          <div class="chips" id="manual-list"></div>
+          <form class="inline-form" id="manual-form">
+            <input id="manual-input" placeholder="e.g. 100.101.102.103 or pixel-8">
+            <button class="btn">Add</button>
+          </form>
+          <p class="muted small" id="my-addrs"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Phone setup -->
+    <section class="page" id="page-phone" hidden>
+      <header class="page-head"><div><h1>Phone setup</h1><p class="muted">Android only lets a computer switch on background clipboard access. VoidBridge does it for you. This is a one-time step, and it survives reboots and app updates.</p></div></header>
+      <ol class="steps">
+        <li>
+          <h3>Install VoidBridge on the phone and sign in or join</h3>
+          <p class="muted">Get the APK from the <a href="#" data-open="https://github.com/TheFormOfVoid/VoidBridge/releases/latest">latest release</a>. Join the same server account or sync code as this PC.</p>
+        </li>
+        <li>
+          <h3>Connect the phone to this PC</h3>
+          <p class="muted">On the phone: <b>Settings → About phone</b>, then tap <b>Build number</b> 7 times. Then in <b>Developer options</b>, turn on <b>USB debugging</b> and plug in a cable. Or, with no cable, use <b>Wireless debugging</b> below.</p>
+          <details class="wireless">
+            <summary>Connect without a cable (Wireless debugging, Android 11+)</summary>
+            <p class="muted">On the phone: <b>Developer options → Wireless debugging → Pair device with pairing code</b>. Enter what it shows:</p>
+            <form class="inline-form" id="pair-form">
+              <input id="pair-addr" placeholder="IP address &amp; port (e.g. 192.168.1.40:37123)">
+              <input id="pair-code" placeholder="Pairing code" inputmode="numeric" class="short">
+              <button class="btn">Pair</button>
+            </form>
+            <p class="muted">Then enter the IP address &amp; port from the main Wireless debugging screen:</p>
+            <form class="inline-form" id="connect-form">
+              <input id="connect-addr" placeholder="IP address &amp; port (e.g. 192.168.1.40:41234)">
+              <button class="btn">Connect</button>
+            </form>
+          </details>
+        </li>
+        <li>
+          <h3>Set up automatic sync</h3>
+          <div id="adb-panel"></div>
+          <div id="adb-results"></div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- Server -->
+    <section class="page" id="page-server" hidden>
+      <header class="page-head"><div><h1>Server</h1><p class="muted" id="server-sub"></p></div><div class="head-actions"><button class="btn subtle" id="server-refresh">Refresh</button></div></header>
+      <h2 class="section-title">Your devices</h2>
+      <div class="panel" id="my-devices"></div>
+      <div id="admin-area" hidden>
+        <h2 class="section-title">Invite codes</h2>
+        <div class="panel">
+          <form class="inline-form" id="invite-form">
+            <input id="invite-note" placeholder="Who is it for? (optional)">
+            <label class="muted small">Uses <input id="invite-uses" type="number" min="1" max="100" value="1" class="short"></label>
+            <label class="muted small">Expires in <select id="invite-days"><option value="1">1 day</option><option value="7" selected>7 days</option><option value="30">30 days</option><option value="0">never</option></select></label>
+            <button class="btn accent">Create invite</button>
+          </form>
+          <div id="invite-list"></div>
+        </div>
+        <h2 class="section-title">Accounts</h2>
+        <div class="panel" id="user-list"></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="page" id="page-settings" hidden>
+      <header class="page-head"><div><h1>Settings</h1></div></header>
+      <div class="panel">
+        <label class="setting">
+          <div><b>Start with Windows</b><p class="muted">Runs quietly in the tray and connects automatically when you sign in.</p></div>
+          <input type="checkbox" class="switch" id="set-autostart">
+        </label>
+        <label class="setting">
+          <div><b>Don't sync passwords</b><p class="muted">Skip anything a password manager marks as sensitive.</p></div>
+          <input type="checkbox" class="switch" id="set-sensitive">
+        </label>
+        <label class="setting">
+          <div><b>Keep clipboard history</b><p class="muted">The last 50 clips, kept in memory only and cleared when VoidBridge closes.</p></div>
+          <input type="checkbox" class="switch" id="set-history">
+        </label>
+        <div class="setting">
+          <div><b>Device name</b><p class="muted">How this PC appears on your other devices.</p></div>
+          <form class="inline-form" id="name-form"><input id="set-name"><button class="btn">Save</button></form>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="setting"><div><b>Log file</b><p class="muted">Useful when something isn't working.</p></div><button class="btn" id="open-log">Open log</button></div>
+        <div class="setting"><div><b>About</b><p class="muted" id="about"></p></div><button class="btn subtle" id="quit">Quit VoidBridge</button></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -43,8 +43,8 @@ func makeIcon(c color.NRGBA, ico bool) []byte {
 
 	var out bytes.Buffer
 	binary.Write(&out, binary.LittleEndian, []uint16{0, 1, 1}) // reserved, type=icon, count
-	out.Write([]byte{size, size, 0, 0})                         // w, h, palette, reserved
-	binary.Write(&out, binary.LittleEndian, []uint16{1, 32})     // planes, bpp
+	out.Write([]byte{size, size, 0, 0})                        // w, h, palette, reserved
+	binary.Write(&out, binary.LittleEndian, []uint16{1, 32})   // planes, bpp
 	binary.Write(&out, binary.LittleEndian, []uint32{uint32(pngBuf.Len()), 22})
 	out.Write(pngBuf.Bytes())
 	return out.Bytes()
