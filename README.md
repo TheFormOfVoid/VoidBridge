@@ -93,9 +93,8 @@ computer can grant, **once**. The Windows app does it for you:
    - "display over other apps";
    - unrestricted battery.
 
-The permissions survive reboots and app updates, as long as updates are signed
-with the same key (see [Stable APK signing](#stable-apk-signing)). On Android
-13+, tap **Allow** the first time the phone asks about device logs.
+The permissions survive reboots and app updates. On Android 13+, tap **Allow**
+the first time the phone asks about device logs.
 
 Without this step you can still send from the phone with one tap: use the
 **Send clipboard** Quick Settings tile, the notification button, or **Share →
@@ -113,39 +112,7 @@ Send to all my devices**.
 
 Text up to 1 MB and images up to 25 MB are synced. Files aren't synced yet.
 
-## Development
+## Building it yourself
 
-```
-cmd/voidbridge/          Windows app (Go + Wails; UI in frontend/, tray, adb phone setup)
-cmd/voidbridge-server/   Self-hosted server
-internal/protocol        Wire format and crypto (docs/PROTOCOL.md)
-internal/node            Sync engine: each copy passed to every device, newest wins
-internal/peer            Direct links: Wi-Fi discovery, Tailscale, peer exchange
-internal/relay, server   Server client and server
-android/core             Kotlin port of protocol/node/peer/relay (plain JVM, unit-tested)
-android/app              Android app
-tools/interop            Go devices + server that the Kotlin tests run against
-```
-
-- `go test ./...` runs the Go tests: multi-device sync, images, offline
-  catch-up, the server, and the Wi-Fi fallback.
-- Windows build:
-  `GOOS=windows go build -tags desktop,production -ldflags "-H windowsgui" ./cmd/voidbridge`.
-- Android: `cd android && ./gradlew :core:test :app:assembleDebug`. CI also runs
-  the Kotlin tests against the real Go implementation (`tools/interop`).
-- Push a tag like `v0.2.0` to publish a release with every binary.
-
-### Stable APK signing
-
-Without a stable key, every CI build gets a different signing key. Android
-then refuses to update, and uninstalling also wipes the phone-setup
-permissions. Create a key once:
-
-```
-keytool -genkeypair -v -keystore voidbridge.jks -alias voidbridge -keyalg RSA -keysize 4096 -validity 36500
-```
-
-Then add these repository secrets: `VOIDBRIDGE_KEYSTORE_BASE64` (the output of
-`base64 -w0 voidbridge.jks`), `VOIDBRIDGE_KEYSTORE_PASSWORD`,
-`VOIDBRIDGE_KEY_ALIAS` (`voidbridge`) and `VOIDBRIDGE_KEY_PASSWORD`. Keep
-`voidbridge.jks` somewhere safe.
+Want to build VoidBridge from source or contribute? See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
