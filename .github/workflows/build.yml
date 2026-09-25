@@ -6,6 +6,15 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release with this tag (e.g. v0.2.0, or v0.2.0-beta.1 for a pre-release). Leave empty to just build."
+        required: false
+        default: ""
+
+env:
+  # The version stamped into the apps: the release tag, or the branch/tag name.
+  VERSION: ${{ inputs.release_tag || github.ref_name }}
 
 permissions:
   contents: write # for publishing releases on tags
@@ -26,7 +35,6 @@ jobs:
           go test -race ./...
       - name: Build
         run: |
-          VERSION="${GITHUB_REF_NAME}"
           LDFLAGS="-s -w -X main.version=$VERSION"
           mkdir -p dist
           for arch in amd64 arm64; do
@@ -96,7 +104,7 @@ jobs:
         working-directory: android
         env:
           VOIDBRIDGE_VERSION_CODE: ${{ github.run_number }}
-          VOIDBRIDGE_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('0.2.0-{0}', github.run_number) }}
+          VOIDBRIDGE_VERSION_NAME: ${{ (inputs.release_tag || github.ref_type == 'tag') && env.VERSION || format('0.2.0-{0}', github.run_number) }}
         run: ./gradlew --no-daemon :core:test :app:assembleRelease
 
       - name: Go side of the interop tests
@@ -113,7 +121,7 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [go, android]
     runs-on: ubuntu-latest
     steps:
@@ -125,5 +133,8 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          # From a manual run the tag is created on the commit that was built.
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           # Tags like v0.2.0-beta.1 publish as pre-releases.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.VERSION, '-') }}
