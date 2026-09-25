@@ -8,11 +8,11 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val prefs = Prefs(context)
-        if (prefs.enabled && prefs.paired) {
+        if (prefs.enabled && prefs.configured) {
             try {
                 SyncService.start(context)
             } catch (_: Exception) {
-                // Some OEMs refuse background starts even here; the user opening the app fixes it.
+                // Some OEMs refuse background starts even here; opening the app fixes it.
             }
         }
     }

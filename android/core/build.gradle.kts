@@ -13,6 +13,7 @@ kotlin {
 }
 
 dependencies {
+    api("com.squareup.okhttp3:okhttp:4.12.0")
     // Android ships org.json; only the JVM tests need a copy.
     compileOnly("org.json:json:20240303")
     testImplementation("org.json:json:20240303")
@@ -21,7 +22,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    // Set by CI to run the interop test against the real Go PC app.
-    System.getenv("VOIDBRIDGE_PC_ADDR")?.let { environment("VOIDBRIDGE_PC_ADDR", it) }
-    System.getenv("VOIDBRIDGE_PC_CODE")?.let { environment("VOIDBRIDGE_PC_CODE", it) }
+    // Set by CI (and tools/interop) to test against the real Go implementation.
+    listOf("VOIDBRIDGE_INTEROP_PEER", "VOIDBRIDGE_INTEROP_CODE", "VOIDBRIDGE_INTEROP_SERVER").forEach { k ->
+        System.getenv(k)?.let { environment(k, it) }
+    }
 }

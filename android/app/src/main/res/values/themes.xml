@@ -24,6 +24,22 @@
         <item name="android:textColor">@color/accent</item>
     </style>
 
+    <style name="Card">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:layout_marginTop">6dp</item>
+        <item name="android:background">@drawable/card</item>
+    </style>
+
+    <style name="Field">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">6dp</item>
+        <item name="android:importantForAutofill">no</item>
+    </style>
+
     <style name="StepText">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>

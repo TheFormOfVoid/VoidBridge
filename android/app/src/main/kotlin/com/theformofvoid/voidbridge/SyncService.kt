@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -19,43 +20,49 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.util.Log
-import com.theformofvoid.voidbridge.core.Discovery
-import com.theformofvoid.voidbridge.core.HostSource
+import com.theformofvoid.voidbridge.core.Content
+import com.theformofvoid.voidbridge.core.Device
+import com.theformofvoid.voidbridge.core.Identity
+import com.theformofvoid.voidbridge.core.Message
+import com.theformofvoid.voidbridge.core.Node
+import com.theformofvoid.voidbridge.core.PeerManager
 import com.theformofvoid.voidbridge.core.Protocol
-import com.theformofvoid.voidbridge.core.SyncClient
-import java.net.InetSocketAddress
+import com.theformofvoid.voidbridge.core.RelayClient
 
 /**
- * Foreground service that keeps the connection to the PC alive and moves
- * clipboard contents both ways.
+ * Foreground service that runs sync: direct links to devices on the same
+ * network or Tailscale, and/or the connection to a VoidBridge server.
  */
-class SyncService : Service(), SyncClient.Listener {
+class SyncService : Service(), Node.Listener {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: Prefs
     private lateinit var clipboard: ClipboardManager
-    private var client: SyncClient? = null
-    private var discovery: Discovery? = null
+    private var node: Node? = null
+    private var peers: PeerManager? = null
+    private var relay: RelayClient? = null
     private var logcat: LogcatWatcher? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var lastReaderLaunch = 0L
+    @Volatile private var serverUp = false
+    @Volatile private var serverErr: String? = null
+    @Volatile private var peerErr: String? = null
+    private var updatePosted = false
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            client?.kick()
-        }
-
-        override fun onLost(network: Network) {
-            client?.reconnect()
+            peers?.kick()
+            relay?.kick()
         }
     }
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
-        // Delivered only when we're allowed to read: Android 9 and older, or
-        // while one of our activities has focus.
-        readClipboard()?.let { client?.localClip(it) }
+        // Delivered only when we may read: Android 9 and older, or while one
+        // of our activities has focus.
+        Thread { readClipboard()?.let { node?.localCopy(it) } }.start()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -70,49 +77,59 @@ class SyncService : Service(), SyncClient.Listener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val key = prefs.pairingKey
-        if (key == null) {
+        if (!prefs.configured) {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (client == null) startSync(key)
+        if (node == null) startSync()
         return START_STICKY
     }
 
-    private fun startSync(key: ByteArray) {
+    private fun deviceName(): String =
+        Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
+
+    private fun startSync() {
+        val keys = prefs.keys ?: return
+        val n = Node(Identity(prefs.deviceId, deviceName(), "android"), keys, this)
+        n.paused = prefs.paused
+        n.skipSensitive = prefs.skipSensitive
+        node = n
+
         val wifi = applicationContext.getSystemService(WifiManager::class.java)
-        multicastLock = wifi.createMulticastLock("voidbridge-discovery").apply { setReferenceCounted(false) }
         @Suppress("DEPRECATION")
-        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "voidbridge").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
+        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "voidbridge").apply { setReferenceCounted(false); acquire() }
 
-        val disc = Discovery(Protocol.fingerprint(key)) { Log.d(TAG, it) }
-        discovery = disc
-        multicastLock?.acquire()
-        disc.start()
-
-        val hosts = HostSource {
-            val out = LinkedHashSet<InetSocketAddress>()
-            Prefs.parseHost(prefs.manualHost)?.let(out::add)
-            var found = disc.recent()
-            if (found.isEmpty()) {
-                disc.probe()
-                Thread.sleep(1_000)
-                found = disc.recent()
+        if (prefs.direct) {
+            multicastLock = wifi.createMulticastLock("voidbridge").apply { setReferenceCounted(false); acquire() }
+            val pm = PeerManager(n, keys, log = { Log.d(TAG, it) })
+            try {
+                pm.setManual(prefs.manualList)
+                pm.start()
+                peers = pm
+            } catch (e: Exception) {
+                peerErr = getString(R.string.err_port, e.message ?: "")
+                Log.w(TAG, "direct links: $e")
             }
-            out.addAll(found)
-            Prefs.parseHost(prefs.lastHost)?.let(out::add)
-            out.toList()
         }
-        val c = SyncClient(key, prefs.deviceId, deviceName(), hosts, this)
-        client = c
-        c.start()
+        if (prefs.mode == MODE_ACCOUNT && prefs.token.isNotEmpty()) {
+            relay = RelayClient(prefs.server, prefs.token, n, object : RelayClient.Listener {
+                override fun onState(connected: Boolean, error: String?) {
+                    serverUp = connected
+                    serverErr = error
+                    changed()
+                }
+
+                override fun onUnauthorized() {
+                    serverErr = getString(R.string.err_signed_out)
+                    changed()
+                }
+            }).also { it.start() }
+        }
 
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         clipboard.addPrimaryClipChangedListener(clipListener)
         startLogcatWatcher()
+        changed()
     }
 
     /** Starts (or restarts) background clipboard detection if we have READ_LOGS. */
@@ -134,59 +151,94 @@ class SyncService : Service(), SyncClient.Listener {
         main.post { ClipboardReaderActivity.launch(this) }
     }
 
-    /** Called with text read by ClipboardReaderActivity, ShareActivity or the tile. */
-    fun onLocalText(text: String) {
-        client?.localClip(text)
+    /** Called with content read by ClipboardReaderActivity, ShareActivity or the tile. */
+    fun onLocalContent(c: Content, manual: Boolean = false) {
+        val n = node ?: return
+        Thread {
+            if (manual) n.forgetLastHash() // an explicit "send" always sends
+            n.localCopy(c)
+        }.start()
     }
 
-    fun readClipboard(): String? = try {
-        clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
-    } catch (e: SecurityException) {
-        null
+    /** Reads the clipboard (text or image). Only works while we may read it. */
+    fun readClipboard(): Content? = readClip(this, clipboard)
+
+    fun setPaused(p: Boolean) {
+        prefs.paused = p
+        node?.paused = p
+        changed()
     }
 
-    // SyncClient.Listener
+    fun setSkipSensitive(s: Boolean) {
+        prefs.skipSensitive = s
+        node?.skipSensitive = s
+    }
 
-    override fun applyRemoteClip(text: String) {
+    fun setManual(list: List<String>) = peers?.setManual(list)
+
+    // ---- Node.Listener ----
+
+    override fun apply(content: Content, from: Message) {
         logcat?.suppressUntil = System.currentTimeMillis() + 1_500
+        val clip = when (content.type) {
+            Protocol.CLIP_TEXT -> ClipData.newPlainText("VoidBridge", content.text)
+            else -> {
+                val uri = try {
+                    ClipProvider.save(this, from.id, content.data, content.mime)
+                } catch (e: Exception) {
+                    Log.w(TAG, "saving image: $e")
+                    return
+                }
+                ClipData.newUri(contentResolver, "Image from ${from.originName}", uri)
+            }
+        }
         main.post {
             try {
-                clipboard.setPrimaryClip(ClipData.newPlainText("VoidBridge", text))
+                clipboard.setPrimaryClip(clip)
             } catch (e: Exception) {
                 Log.w(TAG, "setPrimaryClip: $e")
             }
         }
     }
 
-    override fun onStatus(status: SyncClient.Status) {
-        val connected = status is SyncClient.Status.Connected
-        if (connected) multicastLock?.release() else multicastLock?.acquire()
-        val text = when (status) {
-            is SyncClient.Status.Searching -> getString(R.string.status_searching)
-            is SyncClient.Status.Connecting -> getString(R.string.status_connecting, status.address)
-            is SyncClient.Status.Connected -> getString(R.string.status_connected, status.pcName)
-            is SyncClient.Status.Failed -> status.reason
-        }
+    override fun changed() {
         main.post {
-            lastStatus = text
-            lastConnected = connected
-            goForeground(text)
-            statusListener?.invoke(text, connected)
+            if (updatePosted) return@post
+            updatePosted = true
+            main.postDelayed({
+                updatePosted = false
+                val st = status()
+                lastStatus = st
+                goForeground(st.text)
+                statusListener?.invoke(st)
+            }, 200)
         }
-    }
-
-    override fun onConnectedTo(address: InetSocketAddress) {
-        prefs.lastHost = "${address.hostString}:${address.port}"
     }
 
     override fun log(msg: String) {
         Log.d(TAG, msg)
     }
 
+    /** What the UI shows. */
+    data class Status(val text: String, val connected: Boolean, val devices: List<Device>, val serverUp: Boolean, val serverErr: String?, val peerErr: String?, val paused: Boolean)
+
+    fun status(): Status {
+        val devices = node?.devices() ?: emptyList()
+        val text = when {
+            prefs.paused -> getString(R.string.status_paused)
+            devices.size == 1 -> getString(R.string.status_one, devices[0].name)
+            devices.size > 1 -> getString(R.string.status_many, devices.size)
+            prefs.mode == MODE_ACCOUNT && !serverUp -> getString(R.string.status_server_down)
+            else -> getString(R.string.status_waiting)
+        }
+        return Status(text, devices.isNotEmpty(), devices, serverUp, serverErr, peerErr, prefs.paused)
+    }
+
     override fun onDestroy() {
         instance = null
-        client?.stop()
-        discovery?.stop()
+        relay?.stop()
+        peers?.stop()
+        node?.shutdown()
         logcat?.stop()
         clipboard.removePrimaryClipChangedListener(clipListener)
         try {
@@ -195,14 +247,10 @@ class SyncService : Service(), SyncClient.Listener {
         }
         multicastLock?.release()
         wifiLock?.release()
-        lastStatus = getString(R.string.status_stopped)
-        lastConnected = false
-        statusListener?.invoke(lastStatus, false)
+        lastStatus = null
+        statusListener?.invoke(null)
         super.onDestroy()
     }
-
-    private fun deviceName(): String =
-        Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
 
     private fun createChannel() {
         val ch = NotificationChannel(CHANNEL, getString(R.string.channel_name), NotificationManager.IMPORTANCE_LOW)
@@ -232,13 +280,15 @@ class SyncService : Service(), SyncClient.Listener {
         private const val TAG = "VoidBridge"
         private const val CHANNEL = "sync"
         private const val NOTIFICATION_ID = 1
+        const val MODE_CODE = "code"
+        const val MODE_ACCOUNT = "account"
 
         @Volatile var instance: SyncService? = null
             private set
 
-        var lastStatus = ""
-        var lastConnected = false
-        var statusListener: ((String, Boolean) -> Unit)? = null
+        var lastStatus: Status? = null
+        val lastConnected get() = lastStatus?.connected == true
+        var statusListener: ((Status?) -> Unit)? = null
 
         fun hasReadLogs(ctx: Context) =
             ctx.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
@@ -248,8 +298,52 @@ class SyncService : Service(), SyncClient.Listener {
         }
 
         fun stop(ctx: Context) {
-            Prefs(ctx).enabled = false
             ctx.stopService(Intent(ctx, SyncService::class.java))
+        }
+
+        private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
+
+        /** Reads text or an image from the clipboard; null if nothing usable or not allowed. */
+        fun readClip(ctx: Context, cm: ClipboardManager): Content? {
+            val clip = try {
+                cm.primaryClip
+            } catch (e: SecurityException) {
+                null
+            } ?: return null
+            if (clip.itemCount == 0) return null
+            val desc: ClipDescription = clip.description
+            val extras: PersistableBundle? = if (Build.VERSION.SDK_INT >= 24) desc.extras else null
+            val sensitive = extras?.getBoolean(EXTRA_IS_SENSITIVE, false) == true
+            val item = clip.getItemAt(0)
+            val uri = item.uri
+            if (uri != null) {
+                val mime = ctx.contentResolver.getType(uri) ?: (0 until desc.mimeTypeCount).map { desc.getMimeType(it) }.firstOrNull { it.startsWith("image/") }
+                if (mime != null && mime.startsWith("image/")) {
+                    return try {
+                        ctx.contentResolver.openInputStream(uri)?.use { input ->
+                            val buf = input.readNBytesCompat(Protocol.MAX_IMAGE + 1)
+                            if (buf.size > Protocol.MAX_IMAGE) null else Content(Protocol.CLIP_IMAGE, data = buf, mime = mime, sensitive = sensitive)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "reading clipboard image: $e")
+                        null
+                    }
+                }
+            }
+            val text = item.coerceToText(ctx)?.toString()
+            if (text.isNullOrEmpty()) return null
+            return Content(Protocol.CLIP_TEXT, text = text, sensitive = sensitive)
+        }
+
+        private fun java.io.InputStream.readNBytesCompat(max: Int): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            while (out.size() <= max) {
+                val n = read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+            }
+            return out.toByteArray()
         }
     }
 }

@@ -10,13 +10,14 @@ import android.widget.Toast
 /**
  * An invisible activity that exists only to gain window focus for a moment,
  * because Android lets only the focused app read the clipboard. It reads the
- * clip, hands it to SyncService and finishes immediately.
+ * clip (text or image), hands it to SyncService and finishes immediately.
  */
 class ClipboardReaderActivity : Activity() {
     private var done = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
     }
 
@@ -24,21 +25,19 @@ class ClipboardReaderActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus || done) return
         done = true
-        val cm = getSystemService(ClipboardManager::class.java)
-        val text = try {
-            cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
-        } catch (e: SecurityException) {
-            null
-        }
+        val manual = intent.getBooleanExtra(EXTRA_MANUAL, false)
+        val content = SyncService.readClip(this, getSystemService(ClipboardManager::class.java))
         val service = SyncService.instance
-        if (!text.isNullOrEmpty()) {
-            if (service != null) {
-                service.onLocalText(text)
-            } else if (intent.getBooleanExtra(EXTRA_MANUAL, false)) {
-                Toast.makeText(this, R.string.not_running, Toast.LENGTH_SHORT).show()
+        when {
+            content == null -> if (manual) Toast.makeText(this, R.string.nothing_to_send, Toast.LENGTH_SHORT).show()
+            service == null -> if (manual) Toast.makeText(this, R.string.not_running, Toast.LENGTH_SHORT).show()
+            else -> {
+                service.onLocalContent(content, manual)
+                if (manual) Toast.makeText(this, R.string.sent, Toast.LENGTH_SHORT).show()
             }
         }
         finish()
+        @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
     }
 

@@ -1,43 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">VoidBridge</string>
-    <string name="share_label">Send to PC clipboard</string>
+    <string name="share_label">Send to all my devices</string>
     <string name="tile_label">Send clipboard</string>
     <string name="channel_name">Clipboard sync</string>
     <string name="action_send">Send clipboard now</string>
 
     <string name="status_starting">Starting…</string>
-    <string name="status_searching">Looking for your PC…</string>
-    <string name="status_connecting">Connecting to %1$s…</string>
-    <string name="status_connected">Connected to %1$s</string>
+    <string name="status_one">Syncing with %1$s</string>
+    <string name="status_many">Syncing with %1$d devices</string>
+    <string name="status_waiting">Waiting for your other devices</string>
+    <string name="status_server_down">Can\'t reach your server right now</string>
+    <string name="status_paused">Sync is paused</string>
     <string name="status_stopped">Not syncing</string>
-    <string name="status_unpaired">Not paired yet</string>
+    <string name="status_unpaired">Not set up yet</string>
+    <string name="err_port">Direct links are off: %1$s</string>
+    <string name="err_signed_out">Signed out by the server. Sign in again.</string>
     <string name="not_running">VoidBridge isn\'t running. Open the app to start it.</string>
-    <string name="sent">Sent to PC</string>
+    <string name="nothing_to_send">Nothing to send</string>
+    <string name="sent">Sent to your devices</string>
+    <string name="sync_on">Sync</string>
 
-    <string name="section_pair">Pair with your PC</string>
-    <string name="pair_help">Run VoidBridge on your PC, click its tray icon → “Pair a phone…”, and type the code shown there.</string>
+    <string name="section_setup_group">Connect your devices</string>
+    <string name="setup_help">Use your VoidBridge server account, or a sync code with no server. Use the same one on all your devices.</string>
+    <string name="tab_server">Server account</string>
+    <string name="tab_code">Sync code</string>
+    <string name="server_hint">Server address (e.g. raspberrypi)</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="invite_hint">Invite code (only to create an account)</string>
+    <string name="sign_in">Sign in</string>
+    <string name="create_account">Create account</string>
+    <string name="working">Working…</string>
+    <string name="password_note">Your password also encrypts your clipboard, so the server can\'t read it.</string>
+    <string name="create_code">Create a new sync code</string>
+    <string name="or_join">or join devices that already have one:</string>
     <string name="code_hint">XXXX-XXXX-XXXX-XXXX</string>
-    <string name="host_hint">PC address (optional, e.g. 192.168.1.20)</string>
-    <string name="pair">Pair</string>
-    <string name="pairing">Pairing…</string>
-    <string name="repair">Save</string>
-    <string name="bad_code">That code should be 16 letters/digits, like ABCD-EFGH-2345-WXYZ.</string>
-    <string name="stop">Stop syncing</string>
-    <string name="start">Start syncing</string>
+    <string name="join">Join</string>
+    <string name="bad_code">A sync code has 16 letters and digits, like ABCD-EFGH-2345-WXYZ.</string>
+
+    <string name="section_group">Your group</string>
+    <string name="summary_account">Signed in as %1$s on %2$s</string>
+    <string name="summary_code">Enter this sync code on your other devices to add them:</string>
+    <string name="leave">Sign out / leave</string>
+
+    <string name="section_options">Connections</string>
+    <string name="direct">Connect directly on Wi-Fi / Tailscale</string>
+    <string name="direct_help">Devices on the same network find each other automatically. With a server, this keeps sync working at home even if the server is down.</string>
+    <string name="manual_hint">Other device addresses (optional, e.g. 100.64.1.2)</string>
+    <string name="skip_sensitive">Don\'t sync passwords (clips marked sensitive)</string>
 
     <string name="section_setup">Setup checklist</string>
+    <string name="pc_setup_tip">Easiest: on your PC, open VoidBridge → Phone setup, plug in this phone, and click “Set up this phone”. It does steps 2–4 for you.</string>
     <string name="allow">Allow</string>
     <string name="done">Done ✓</string>
     <string name="step_notifications">1. Notifications: required to keep syncing in the background.</string>
     <string name="step_battery">2. Unrestricted battery: stops Android from cutting the connection while the screen is off.</string>
-    <string name="step_overlay">3. Display over other apps: lets VoidBridge read what you copy on the phone without you opening it.</string>
-    <string name="step_logs">4. One-time computer step for automatic phone → PC sync. With USB debugging on, run this once on your PC (needs adb). On Android 13 and later, also tap “Allow” if asked about device logs.</string>
-    <string name="step_logs_done">4. Automatic phone → PC sync is enabled. (If it stops working after a restart on Android 13+, open this app once.)</string>
-    <string name="step_logs_old">4. Automatic phone → PC sync works out of the box on this Android version.</string>
-    <string name="copy_command">Copy command</string>
-    <string name="copied">Copied. It\'s on your PC clipboard too if you\'re connected.</string>
+    <string name="step_overlay">3. Display over other apps: lets VoidBridge read what you copy without you opening it.</string>
+    <string name="step_logs">4. Automatic phone → other devices needs one permission that only a computer can grant. Use Phone setup on your PC, or run this with adb:</string>
+    <string name="step_logs_done">4. Automatic sync from this phone is on. (On Android 13+, tap “Allow” if asked about device logs.)</string>
+    <string name="step_logs_old">4. Automatic sync from this phone works out of the box on this Android version.</string>
 
-    <string name="section_manual">Without step 4</string>
-    <string name="manual_help">PC → phone is always automatic. For phone → PC you can still use the “Send clipboard” Quick Settings tile, the button in the VoidBridge notification, or Share → “Send to PC clipboard”.</string>
+    <string name="section_manual">Sending manually</string>
+    <string name="manual_help">Copies from your other devices always arrive automatically. To send from this phone without step 4, use the “Send clipboard” Quick Settings tile, the notification button, or Share → “Send to all my devices”.</string>
 </resources>

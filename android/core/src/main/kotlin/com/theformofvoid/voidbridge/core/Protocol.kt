@@ -1,5 +1,6 @@
 package com.theformofvoid.voidbridge.core
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -18,28 +19,28 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * The VoidBridge wire protocol. Must stay byte-compatible with
- * pc/internal/protocol; docs/PROTOCOL.md is the reference.
+ * The VoidBridge wire protocol, version 2. Byte-compatible with the Go code in
+ * internal/protocol; docs/PROTOCOL.md is the reference.
  */
 object Protocol {
-    const val VERSION = 1
-    const val MAX_FRAME = 4 shl 20
+    const val VERSION = 2
+    const val MAX_FRAME = 40 shl 20
     const val MAX_TEXT = 1 shl 20
-    const val DEFAULT_PORT = 47829
+    const val MAX_IMAGE = 25 shl 20
+    const val PEER_PORT = 47829
     const val DISCOVERY_PORT = 47830
-
-    private const val PAIRING_ITERATIONS = 200_000
-    private const val PAIRING_SALT = "voidbridge-pairing-v1"
-    private const val SESSION_LABEL = "voidbridge-session-v1"
-    private const val BEACON_LABEL = "voidbridge-beacon-v1"
+    const val SERVER_PORT = 47831
     const val NONCE_SIZE = 16
+    private const val PBKDF_ITERATIONS = 200_000
 
     const val DIR_CLIENT = 0x76620001
     const val DIR_SERVER = 0x76620002
 
+    const val CLIP_TEXT = "text"
+    const val CLIP_IMAGE = "image"
+
     private val random = SecureRandom()
 
-    /** Same rules as the PC: uppercase, drop separators, fix 0/1/8 typos. */
     fun normalizeCode(code: String): String = buildString {
         for (c in code.uppercase()) {
             when (c) {
@@ -53,39 +54,196 @@ object Protocol {
 
     fun validCode(code: String) = normalizeCode(code).length == 16
 
-    /** Slow on purpose (PBKDF2); call off the main thread. */
-    fun deriveKey(code: String): ByteArray {
-        val spec = PBEKeySpec(normalizeCode(code).toCharArray(), PAIRING_SALT.toByteArray(), PAIRING_ITERATIONS, 256)
+    fun formatCode(code: String): String {
+        val n = normalizeCode(code)
+        return if (n.length != 16) code else n.chunked(4).joinToString("-")
+    }
+
+    fun newGroupCode(): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        return formatCode(String(CharArray(16) { alphabet[random.nextInt(32)] }))
+    }
+
+    fun normalizeUsername(u: String) = u.trim().lowercase()
+
+    private fun pbkdf(secret: String, salt: String): ByteArray {
+        val spec = PBEKeySpec(secret.toCharArray(), salt.toByteArray(), PBKDF_ITERATIONS, 256)
         return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
     }
 
-    fun sessionKey(pairingKey: ByteArray, clientNonce: ByteArray, serverNonce: ByteArray): ByteArray =
-        hmac(pairingKey, SESSION_LABEL.toByteArray(), clientNonce, serverNonce)
+    /** Slow on purpose; call off the main thread. */
+    fun masterFromCode(code: String) = pbkdf(normalizeCode(code), "voidbridge-pairing-v1")
 
-    fun fingerprint(pairingKey: ByteArray): String =
-        hmac(pairingKey, BEACON_LABEL.toByteArray()).copyOf(8).toHex()
+    /** Slow on purpose; call off the main thread. */
+    fun masterFromAccount(username: String, password: String) =
+        pbkdf(password, "voidbridge-account-v1:" + normalizeUsername(username))
 
-    fun newNonce(): ByteArray = ByteArray(NONCE_SIZE).also { random.nextBytes(it) }
-
-    fun newId(): String = ByteArray(8).also { random.nextBytes(it) }.toHex()
-
-    fun sha256(s: String): String = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).toHex()
-
-    private fun hmac(key: ByteArray, vararg parts: ByteArray): ByteArray {
+    fun hmac(key: ByteArray, vararg parts: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         parts.forEach { mac.update(it) }
         return mac.doFinal()
     }
+
+    /** HKDF-SHA256 (RFC 5869) with an empty salt, for one 32-byte output. */
+    fun hkdf(secret: ByteArray, info: String): ByteArray {
+        val prk = hmac(ByteArray(32), secret)
+        return hmac(prk, info.toByteArray(), byteArrayOf(1))
+    }
+
+    fun sessionKey(linkKey: ByteArray, clientNonce: ByteArray, serverNonce: ByteArray) =
+        hmac(linkKey, "voidbridge-session-v2".toByteArray(), clientNonce, serverNonce)
+
+    fun newNonce(): ByteArray = ByteArray(NONCE_SIZE).also { random.nextBytes(it) }
+    fun newId(): String = ByteArray(8).also { random.nextBytes(it) }.toHex()
+
+    fun hash(kind: String, data: ByteArray): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        md.update(kind.toByteArray())
+        md.update(0)
+        md.update(data)
+        return md.digest().toHex()
+    }
+
+    // ---- end-to-end clip encryption ----
+
+    private fun clipAAD(m: Message) =
+        "voidbridge-clip-v2|${m.id}|${m.origin}|${m.time}|${m.clipType}|${m.mime}".toByteArray()
+
+    fun sealClip(contentKey: ByteArray, m: Message, plaintext: ByteArray): Message {
+        val nonce = ByteArray(12).also { random.nextBytes(it) }
+        val c = Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(contentKey, "AES"), GCMParameterSpec(128, nonce))
+        c.updateAAD(clipAAD(m))
+        return m.copy(body = nonce + c.doFinal(plaintext))
+    }
+
+    fun openClip(contentKey: ByteArray, m: Message): ByteArray? {
+        val body = m.body ?: return null
+        if (body.size < 12 + 16) return null
+        return try {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, SecretKeySpec(contentKey, "AES"), GCMParameterSpec(128, body, 0, 12))
+            c.updateAAD(clipAAD(m))
+            c.doFinal(body, 12, body.size - 12)
+        } catch (e: Exception) {
+            null
+        }
+    }
 }
 
 fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
-
 fun String.hexToBytes(): ByteArray = ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
-class AuthException : IOException("authentication failed (wrong pairing code?)")
+/** Everything derived from a group secret. */
+class Keys(val master: ByteArray) {
+    val link = Protocol.hkdf(master, "voidbridge-link-v2")
+    val content = Protocol.hkdf(master, "voidbridge-content-v2")
+    val auth = Protocol.hkdf(master, "voidbridge-auth-v2")
+    val fingerprint: String = Protocol.hmac(link, "voidbridge-beacon-v2".toByteArray()).copyOf(8).toHex()
+}
 
-/** AES-256-GCM with direction-tagged counter nonces; see protocol.Cipher in Go. */
+data class Identity(val id: String, val name: String, val kind: String = "android")
+
+data class PeerInfo(val id: String, val name: String = "", val kind: String = "", val addrs: List<String> = emptyList()) {
+    fun toJson(): JSONObject = JSONObject().put("id", id).apply {
+        if (name.isNotEmpty()) put("name", name)
+        if (kind.isNotEmpty()) put("kind", kind)
+        if (addrs.isNotEmpty()) put("addrs", JSONArray(addrs))
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject) = PeerInfo(
+            o.optString("id"), o.optString("name"), o.optString("kind"),
+            o.optJSONArray("addrs")?.let { a -> List(a.length()) { a.optString(it) } } ?: emptyList(),
+        )
+    }
+}
+
+/** A frame header plus optional binary body. Field names match the Go JSON tags. */
+data class Message(
+    val type: String,
+    val version: Int = 0,
+    val id: String = "",
+    val name: String = "",
+    val kind: String = "",
+    val nonce: ByteArray? = null,
+    val addrs: List<String> = emptyList(),
+    val origin: String = "",
+    val originName: String = "",
+    val time: Long = 0,
+    val clipType: String = "",
+    val mime: String = "",
+    val peers: List<PeerInfo> = emptyList(),
+    val body: ByteArray? = null,
+) {
+    /** Newer by copy time, then id, exactly as the Go side orders clips. */
+    fun newerThan(cur: Message?): Boolean =
+        cur == null || time > cur.time || (time == cur.time && id > cur.id)
+
+    fun encode(): ByteArray {
+        val o = JSONObject().put("t", type)
+        if (version != 0) o.put("v", version)
+        if (id.isNotEmpty()) o.put("id", id)
+        if (name.isNotEmpty()) o.put("name", name)
+        if (kind.isNotEmpty()) o.put("kind", kind)
+        if (nonce != null) o.put("nonce", Base64.getEncoder().encodeToString(nonce))
+        if (addrs.isNotEmpty()) o.put("addrs", JSONArray(addrs))
+        if (origin.isNotEmpty()) o.put("origin", origin)
+        if (originName.isNotEmpty()) o.put("origin_name", originName)
+        if (time != 0L) o.put("time", time)
+        if (clipType.isNotEmpty()) o.put("ctype", clipType)
+        if (mime.isNotEmpty()) o.put("mime", mime)
+        if (peers.isNotEmpty()) o.put("peers", JSONArray(peers.map { it.toJson() }))
+        val h = o.toString().toByteArray(Charsets.UTF_8)
+        val b = body ?: ByteArray(0)
+        return ByteBuffer.allocate(4 + h.size + b.size).putInt(h.size).put(h).put(b).array()
+    }
+
+    companion object {
+        const val HELLO = "hello"
+        const val READY = "ready"
+        const val PING = "ping"
+        const val PONG = "pong"
+        const val CLIP = "clip"
+        const val PEERS = "peers"
+        const val DEVICES = "devices"
+
+        fun decode(b: ByteArray): Message {
+            if (b.size < 4) throw IOException("short frame")
+            val n = ByteBuffer.wrap(b).int
+            if (n < 0 || n > b.size - 4) throw IOException("bad header length")
+            val o = try {
+                JSONObject(String(b, 4, n, Charsets.UTF_8))
+            } catch (e: Exception) {
+                throw IOException("bad header", e)
+            }
+            val t = o.optString("t")
+            if (t.isEmpty()) throw IOException("message without type")
+            fun strings(key: String) = o.optJSONArray(key)?.let { a -> List(a.length()) { a.optString(it) } } ?: emptyList()
+            return Message(
+                type = t,
+                version = o.optInt("v"),
+                id = o.optString("id"),
+                name = o.optString("name"),
+                kind = o.optString("kind"),
+                nonce = o.optString("nonce").takeIf { it.isNotEmpty() }?.let { Base64.getDecoder().decode(it) },
+                addrs = strings("addrs"),
+                origin = o.optString("origin"),
+                originName = o.optString("origin_name"),
+                time = o.optLong("time"),
+                clipType = o.optString("ctype"),
+                mime = o.optString("mime"),
+                peers = o.optJSONArray("peers")?.let { a -> List(a.length()) { PeerInfo.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
+                body = if (b.size > 4 + n) b.copyOfRange(4 + n, b.size) else null,
+            )
+        }
+    }
+}
+
+class AuthException : IOException("devices are not in the same group")
+
+/** AES-256-GCM with direction-tagged counter nonces (direct links only). */
 class FrameCipher(sessionKey: ByteArray, isServer: Boolean) {
     private val key = SecretKeySpec(sessionKey, "AES")
     private val sendDir = if (isServer) Protocol.DIR_SERVER else Protocol.DIR_CLIENT
@@ -104,83 +262,43 @@ class FrameCipher(sessionKey: ByteArray, isServer: Boolean) {
     fun open(sealed: ByteArray): ByteArray {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce(recvDir, recvCount)))
-        val plain = try {
+        val p = try {
             c.doFinal(sealed)
         } catch (e: AEADBadTagException) {
             throw AuthException()
         }
         recvCount++
-        return plain
+        return p
     }
 }
 
-/** One protocol message. Field names match the Go JSON tags. */
-data class Message(
-    val type: String,
-    val version: Int = 0,
-    val id: String = "",
-    val name: String = "",
-    val nonce: ByteArray? = null,
-    val time: Long = 0,
-    val text: String = "",
-) {
-    fun encode(): ByteArray {
-        val o = JSONObject().put("t", type)
-        if (version != 0) o.put("v", version)
-        if (id.isNotEmpty()) o.put("id", id)
-        if (name.isNotEmpty()) o.put("name", name)
-        if (nonce != null) o.put("nonce", Base64.getEncoder().encodeToString(nonce))
-        if (time != 0L) o.put("time", time)
-        if (text.isNotEmpty()) o.put("text", text)
-        return o.toString().toByteArray(Charsets.UTF_8)
-    }
-
-    companion object {
-        const val HELLO = "hello"
-        const val READY = "ready"
-        const val PING = "ping"
-        const val PONG = "pong"
-        const val CLIP = "clip"
-        const val ACK = "ack"
-
-        fun decode(b: ByteArray): Message {
-            val o = try {
-                JSONObject(String(b, Charsets.UTF_8))
-            } catch (e: Exception) {
-                throw IOException("bad message", e)
-            }
-            val t = o.optString("t")
-            if (t.isEmpty()) throw IOException("message without type")
-            return Message(
-                type = t,
-                version = o.optInt("v"),
-                id = o.optString("id"),
-                name = o.optString("name"),
-                nonce = o.optString("nonce").takeIf { it.isNotEmpty() }?.let { Base64.getDecoder().decode(it) },
-                time = o.optLong("time"),
-                text = o.optString("text"),
-            )
-        }
-    }
-}
-
-/** An authenticated, encrypted connection (client side). */
+/** An authenticated, encrypted direct link to another device. */
 class Connection private constructor(
     private val socket: Socket,
     private val input: DataInputStream,
     private val output: DataOutputStream,
     private val cipher: FrameCipher,
-    val peerId: String,
-    val peerName: String,
-    /** Peer clock minus our clock, in ms. */
-    val clockOffset: Long,
+    val peer: Identity,
+    val peerAddrs: List<String>,
+    val dialer: Boolean,
 ) {
-    fun send(m: Message) = synchronized(output) {
-        writeFrame(output, cipher.seal(m.encode()))
+    private val sendLock = Any()
+    private val recvLock = Any()
+
+    val remoteHost: String get() = socket.inetAddress?.hostAddress ?: ""
+    val remoteAddr: String get() = "$remoteHost:${socket.port}"
+
+    fun send(m: Message) {
+        val plain = m.encode()
+        synchronized(sendLock) { writeFrame(output, cipher.seal(plain)) }
     }
 
-    /** Only one thread may receive. Throws SocketTimeoutException on read timeout. */
-    fun recv(): Message = Message.decode(cipher.open(readFrame(input)))
+    /** Blocks until a message arrives; throws SocketTimeoutException after the socket's soTimeout of silence. */
+    fun recv(): Message = synchronized(recvLock) { Message.decode(cipher.open(readFrame(input))) }
+
+    fun setIdleTimeout(ms: Int) {
+        socket.soTimeout = ms
+    }
 
     fun close() = try {
         socket.close()
@@ -189,41 +307,38 @@ class Connection private constructor(
 
     companion object {
         fun writeFrame(out: DataOutputStream, payload: ByteArray) {
-            if (payload.size > Protocol.MAX_FRAME) throw IOException("frame too large")
+            if (payload.size > Protocol.MAX_FRAME + 64) throw IOException("frame too large")
             out.writeInt(payload.size)
             out.write(payload)
             out.flush()
         }
 
-        fun readFrame(input: DataInputStream): ByteArray {
+        fun readFrame(input: DataInputStream, max: Int = Protocol.MAX_FRAME + 64): ByteArray {
             val n = input.readInt()
-            if (n < 0 || n > Protocol.MAX_FRAME) throw IOException("frame too large")
+            if (n < 0 || n > max) throw IOException("frame too large")
             return ByteArray(n).also { input.readFully(it) }
         }
 
-        /** Runs the client handshake over a connected socket. */
-        fun handshake(socket: Socket, pairingKey: ByteArray, myId: String, myName: String, timeoutMs: Int): Connection {
-            val oldTimeout = socket.soTimeout
+        fun handshake(socket: Socket, linkKey: ByteArray, me: Identity, myAddrs: List<String>, dialer: Boolean, timeoutMs: Int): Connection {
             socket.soTimeout = timeoutMs
-            val input = DataInputStream(socket.getInputStream().buffered())
-            val output = DataOutputStream(socket.getOutputStream().buffered())
-
+            val input = DataInputStream(socket.getInputStream().buffered(64 * 1024))
+            val output = DataOutputStream(socket.getOutputStream().buffered(64 * 1024))
             val myNonce = Protocol.newNonce()
-            writeFrame(output, Message(Message.HELLO, version = Protocol.VERSION, id = myId, name = myName,
-                nonce = myNonce, time = System.currentTimeMillis()).encode())
-            val peer = Message.decode(readFrame(input))
+            writeFrame(output, Message(Message.HELLO, version = Protocol.VERSION, id = me.id, name = me.name, kind = me.kind, nonce = myNonce, addrs = myAddrs).encode())
+            val peer = Message.decode(readFrame(input, 64 * 1024))
             if (peer.type != Message.HELLO) throw IOException("expected hello, got ${peer.type}")
-            if (peer.version != Protocol.VERSION) throw IOException("PC speaks protocol ${peer.version}, we speak ${Protocol.VERSION}; update both apps")
-            val serverNonce = peer.nonce ?: throw IOException("hello without nonce")
-            if (serverNonce.size != Protocol.NONCE_SIZE) throw IOException("bad hello nonce")
-
-            val cipher = FrameCipher(Protocol.sessionKey(pairingKey, myNonce, serverNonce), isServer = false)
-            val offset = if (peer.time != 0L) peer.time - System.currentTimeMillis() else 0L
-            val conn = Connection(socket, input, output, cipher, peer.id, peer.name, offset)
+            if (peer.version != Protocol.VERSION) throw IOException("the other device speaks protocol ${peer.version}; update VoidBridge on both")
+            val peerNonce = peer.nonce ?: throw IOException("hello without nonce")
+            if (peerNonce.size != Protocol.NONCE_SIZE || peer.id.isEmpty()) throw IOException("bad hello")
+            if (peer.id == me.id) throw IOException("connected to myself")
+            val (cn, sn) = if (dialer) myNonce to peerNonce else peerNonce to myNonce
+            val conn = Connection(
+                socket, input, output, FrameCipher(Protocol.sessionKey(linkKey, cn, sn), !dialer),
+                Identity(peer.id, peer.name, peer.kind), peer.addrs, dialer,
+            )
             conn.send(Message(Message.READY))
             val ready = conn.recv()
             if (ready.type != Message.READY) throw IOException("expected ready, got ${ready.type}")
-            socket.soTimeout = oldTimeout
             return conn
         }
     }

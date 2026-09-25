@@ -16,100 +16,221 @@
             android:text="@string/app_name"
             android:textAppearance="@android:style/TextAppearance.Material.Headline" />
 
-        <TextView
-            android:id="@+id/status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:drawablePadding="8dp"
-            android:textAppearance="@android:style/TextAppearance.Material.Subhead" />
+        <!-- Status -->
+        <LinearLayout style="@style/Card" android:layout_marginTop="12dp">
+            <TextView
+                android:id="@+id/status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawablePadding="10dp"
+                android:textAppearance="@android:style/TextAppearance.Material.Subhead"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/devices"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="4dp" />
+            <TextView
+                android:id="@+id/problems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/warn"
+                android:visibility="gone" />
+            <Switch
+                android:id="@+id/sync_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/sync_on" />
+        </LinearLayout>
 
-        <!-- Pairing -->
-        <TextView
-            style="@style/Section"
-            android:text="@string/section_pair" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/pair_help" />
-
-        <EditText
-            android:id="@+id/code"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="@string/code_hint"
-            android:importantForAutofill="no"
-            android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
-            android:fontFamily="monospace"
-            android:maxLength="24" />
-
-        <EditText
-            android:id="@+id/host"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/host_hint"
-            android:importantForAutofill="no"
-            android:inputType="textUri" />
-
+        <!-- Not set up: choose server account or sync code -->
         <LinearLayout
+            android:id="@+id/setup_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical">
 
-            <Button
-                android:id="@+id/pair"
-                android:layout_width="0dp"
+            <TextView style="@style/Section" android:text="@string/section_setup_group" />
+            <TextView
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/pair" />
+                android:text="@string/setup_help" />
 
-            <Button
-                android:id="@+id/toggle"
-                style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/stop" />
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+                <Button
+                    android:id="@+id/tab_server"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/tab_server" />
+                <Button
+                    android:id="@+id/tab_code"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/tab_code" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/server_box" style="@style/Card">
+                <EditText
+                    android:id="@+id/server"
+                    style="@style/Field"
+                    android:hint="@string/server_hint"
+                    android:inputType="textUri" />
+                <TextView
+                    android:id="@+id/server_info"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp" />
+                <EditText
+                    android:id="@+id/username"
+                    style="@style/Field"
+                    android:hint="@string/username"
+                    android:inputType="textNoSuggestions" />
+                <EditText
+                    android:id="@+id/password"
+                    style="@style/Field"
+                    android:hint="@string/password"
+                    android:inputType="textPassword" />
+                <EditText
+                    android:id="@+id/invite"
+                    style="@style/Field"
+                    android:hint="@string/invite_hint"
+                    android:inputType="textCapCharacters|textNoSuggestions" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button
+                        android:id="@+id/sign_in"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sign_in" />
+                    <Button
+                        android:id="@+id/register"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/create_account" />
+                </LinearLayout>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/password_note"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/code_box" style="@style/Card" android:visibility="gone">
+                <Button
+                    android:id="@+id/create_code"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/create_code" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="@string/or_join" />
+                <EditText
+                    android:id="@+id/code"
+                    style="@style/Field"
+                    android:fontFamily="monospace"
+                    android:hint="@string/code_hint"
+                    android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+                    android:maxLength="24" />
+                <Button
+                    android:id="@+id/join"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/join" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Set up: summary -->
+        <LinearLayout
+            android:id="@+id/group_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView style="@style/Section" android:text="@string/section_group" />
+            <LinearLayout style="@style/Card">
+                <TextView
+                    android:id="@+id/group_summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textIsSelectable="true" />
+                <TextView
+                    android:id="@+id/group_code"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:textIsSelectable="true"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+                <Button
+                    android:id="@+id/leave"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/leave" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Connection options -->
+        <TextView style="@style/Section" android:text="@string/section_options" />
+        <LinearLayout style="@style/Card">
+            <Switch
+                android:id="@+id/direct_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/direct" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/direct_help"
+                android:textSize="13sp" />
+            <EditText
+                android:id="@+id/manual"
+                style="@style/Field"
+                android:hint="@string/manual_hint"
+                android:inputType="textUri" />
+            <Switch
+                android:id="@+id/sensitive_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/skip_sensitive" />
         </LinearLayout>
 
         <!-- Setup checklist -->
+        <TextView style="@style/Section" android:text="@string/section_setup" />
         <TextView
-            style="@style/Section"
-            android:text="@string/section_setup" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pc_setup_tip"
+            android:textColor="@color/accent" />
 
-        <TextView
-            android:id="@+id/notif_text"
-            style="@style/StepText"
-            android:text="@string/step_notifications" />
-        <Button
-            android:id="@+id/notif_btn"
-            style="@style/StepButton"
-            android:text="@string/allow" />
-
-        <TextView
-            android:id="@+id/battery_text"
-            style="@style/StepText"
-            android:text="@string/step_battery" />
-        <Button
-            android:id="@+id/battery_btn"
-            style="@style/StepButton"
-            android:text="@string/allow" />
-
-        <TextView
-            android:id="@+id/overlay_text"
-            style="@style/StepText"
-            android:text="@string/step_overlay" />
-        <Button
-            android:id="@+id/overlay_btn"
-            style="@style/StepButton"
-            android:text="@string/allow" />
-
-        <TextView
-            android:id="@+id/logs_text"
-            style="@style/StepText"
-            android:text="@string/step_logs" />
+        <TextView android:id="@+id/notif_text" style="@style/StepText" android:text="@string/step_notifications" />
+        <Button android:id="@+id/notif_btn" style="@style/StepButton" android:text="@string/allow" />
+        <TextView android:id="@+id/battery_text" style="@style/StepText" android:text="@string/step_battery" />
+        <Button android:id="@+id/battery_btn" style="@style/StepButton" android:text="@string/allow" />
+        <TextView android:id="@+id/overlay_text" style="@style/StepText" android:text="@string/step_overlay" />
+        <Button android:id="@+id/overlay_btn" style="@style/StepButton" android:text="@string/allow" />
+        <TextView android:id="@+id/logs_text" style="@style/StepText" android:text="@string/step_logs" />
         <TextView
             android:id="@+id/adb_cmd"
             android:layout_width="match_parent"
@@ -120,14 +241,8 @@
             android:padding="8dp"
             android:textIsSelectable="true"
             android:textSize="12sp" />
-        <Button
-            android:id="@+id/logs_btn"
-            style="@style/StepButton"
-            android:text="@string/copy_command" />
 
-        <TextView
-            style="@style/Section"
-            android:text="@string/section_manual" />
+        <TextView style="@style/Section" android:text="@string/section_manual" />
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

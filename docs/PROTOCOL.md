@@ -1,72 +1,121 @@
-# VoidBridge protocol, version 1
+# VoidBridge protocol, version 2
 
-The PC is the server and phones are clients. Everything happens on the local
-network. There are no cloud servers or accounts.
+Reference implementations:
 
-Reference implementations: `pc/internal/protocol` (Go) and
-`android/core/.../Protocol.kt` (Kotlin). Both test against the same
-known-answer vectors (`TestKnownAnswers`, `knownAnswersMatchGo`).
+- Go: `internal/protocol`, `internal/node`, `internal/peer`, `internal/relay`
+  and `internal/server`.
+- Kotlin: `android/core`.
 
-## Discovery (UDP 47830)
+Both sides check the same known-answer vectors (`TestKnownAnswers` and
+`knownAnswersMatchGo`). CI runs the Kotlin client against the Go devices and
+server (`tools/interop`).
 
-Every 2 s the PC broadcasts this JSON to `255.255.255.255:47830` and to each
-interface's directed broadcast address:
+## Groups and keys
 
-```json
-{"app":"voidbridge","id":"pc-…","name":"DESKTOP-1","port":47829,"fp":"<16 hex>"}
-```
+Devices that sync together share a 32-byte **master key**:
 
-`fp` is the first 8 bytes of `HMAC-SHA256(pairingKey, "voidbridge-beacon-v1")`,
-in hex. A phone ignores beacons whose `fp` doesn't match its key. A phone may
-send `{"app":"voidbridge","type":"probe"}` to port 47830, and the PC answers it
-with the beacon right away.
+- **Sync code:** 80 random bits shown as `XXXX-XXXX-XXXX-XXXX` (base32).
+  Normalise the code: uppercase it, map `0→O`, `1→I` and `8→B`, and drop
+  anything else outside `A–Z2–7`. Then
+  `master = PBKDF2-SHA256(code, "voidbridge-pairing-v1", 200000, 32)`.
+- **Server account:**
+  `master = PBKDF2-SHA256(password, "voidbridge-account-v1:" + lowercase(trim(username)), 200000, 32)`.
 
-## Pairing
+Each subkey is derived with HKDF-SHA256 (empty salt, 32 bytes) and an info
+string:
 
-The PC generates 80 random bits and shows them as 16 base32 characters,
-`XXXX-XXXX-XXXX-XXXX`. Both sides normalise the code the same way: uppercase it,
-map `0→O`, `1→I` and `8→B`, and drop anything outside `A–Z2–7`. Then:
+| key | HKDF info | used for |
+|---|---|---|
+| link | `voidbridge-link-v2` | authenticating and encrypting direct links |
+| content | `voidbridge-content-v2` | end-to-end encryption of clip contents |
+| auth | `voidbridge-auth-v2` | logging in to a server (the server stores SHA-256(auth)) |
 
-```
-pairingKey = PBKDF2-HMAC-SHA256(normalisedCode, salt="voidbridge-pairing-v1", iterations=200000, len=32)
-```
+The beacon fingerprint is the first 8 bytes of
+`HMAC-SHA256(link, "voidbridge-beacon-v2")`, in hex.
 
-## Connection (TCP 47829)
+## Frames
 
-Frames are `uint32 big-endian length || payload`, with a maximum of 4 MiB.
+A message is `uint32be headerLen || header JSON || body`. The header carries
+`t` (the type) and the fields below. The body is raw bytes and is used only
+for encrypted clip content. The maximum is 40 MiB.
 
-1. Each side sends a plaintext hello:
-   `{"t":"hello","v":1,"id":"…","name":"…","nonce":"<base64 16 bytes>","time":<unix ms>}`
-2. Both sides derive
-   `sessionKey = HMAC-SHA256(pairingKey, "voidbridge-session-v1" || clientNonce || serverNonce)`.
-3. Every later frame is `AES-256-GCM(sessionKey, nonce, JSON)` with no AAD. The
-   96-bit nonce is `uint32 direction || uint64 counter`. The direction is
-   `0x76620001` from the client and `0x76620002` from the server. Counters start
-   at 0 for each direction, and the receiver requires the exact next value. This
-   rejects replayed, reordered and reflected frames.
-4. Each side sends `{"t":"ready"}` as its first encrypted frame. If it fails to
-   decrypt, the peer used a different pairing code.
+| t | fields | meaning |
+|---|---|---|
+| `hello` | `v`=2, `id`, `name`, `kind`, `nonce` (base64, 16 B), `addrs` | first frame of a direct link (plaintext) |
+| `ready` | | first encrypted frame; proves the sender has the link key |
+| `ping` / `pong` | | keepalive; 25 s of silence means the link is dead |
+| `clip` | `id`, `origin`, `origin_name`, `time` (unix ms), `ctype` (`text`/`image`), `mime` | body = nonce(12) ‖ AES-256-GCM(content key, plaintext, AAD) |
+| `peers` | `peers: [{id,name,kind,addrs}]` | peer exchange on direct links |
+| `devices` | `peers: [{id,name,kind}]` | server → device: the account's online devices |
 
-`time` in the hello gives each side a rough clock offset
-(`peerTime - localTime`). The offset converts clip timestamps into the local
-clock.
+The clip AAD is
+`"voidbridge-clip-v2|" + id + "|" + origin + "|" + time + "|" + ctype + "|" + mime`,
+so none of those header fields can be altered.
 
-## Messages
+## Direct links (TCP 47829)
 
-| message | meaning |
+Every device listens on TCP 47829. Frames go over the wire as
+`uint32be len ‖ payload`.
+
+1. Each side sends its `hello` in plaintext.
+2. Both sides compute
+   `session = HMAC-SHA256(link, "voidbridge-session-v2" ‖ dialerNonce ‖ listenerNonce)`.
+3. Every later frame is AES-256-GCM(session) with a 96-bit nonce made of
+   `uint32 direction ‖ uint64 counter`. The direction is `0x76620001` for the
+   dialer and `0x76620002` for the listener. The receiver requires the exact
+   next counter.
+4. Both sides send `ready`. If it doesn't decrypt, the other device is in a
+   different group.
+
+Discovery works in three ways:
+
+- **Beacons:** every 3 s each device sends UDP broadcasts to port 47830:
+  `{"app":"voidbridge","v":2,"id","name","kind","port","fp"}`. A device can
+  also send `{"type":"probe"}`, and every device that hears it answers with
+  its beacon.
+- **Peer exchange:** `peers` messages spread the addresses of every known
+  device, so one working link is enough to find the rest. That covers
+  Tailscale, where broadcasts don't travel.
+- **Other sources:** addresses typed in by the user, and Tailscale peers
+  (desktop only).
+
+## Server (HTTP 47831)
+
+| endpoint | notes |
 |---|---|
-| `{"t":"ping"}` / `{"t":"pong"}` | The PC pings every 10 s. Either side treats 25 s of silence as a dead link. |
-| `{"t":"clip","id":"…","time":ms,"text":"…"}` | New clipboard text. `time` is the sender's clock. |
-| `{"t":"ack","id":"…"}` | The clip with this id arrived. It's sent even when the clip was ignored. |
+| `GET /api/info` | `{server:"voidbridge", protocol, version, name, signup, has_users}` |
+| `POST /api/register` | `{username, auth_key(base64), invite, device_id, device_name, device_kind}` → `{token, username, admin}` |
+| `POST /api/login` | same fields without `invite` |
+| `POST /api/logout`, `GET /api/me`, `DELETE /api/me/devices/{id}` | bearer token |
+| `GET/POST/DELETE /api/admin/invites…`, `GET/PATCH/DELETE /api/admin/users…` | admin only |
+| `GET /api/sync` | WebSocket (bearer token). Each binary message is one frame. |
+
+The first account needs no invite and becomes the admin. After that an invite
+is required, unless the server was started with `-signup open`. After 10
+failed attempts, logins from that IP or for that username are blocked for 15
+minutes.
+
+The hub keeps each account's newest clip in memory. It forwards newer clips to
+the account's other devices and sends the newest clip to a device when it
+connects. It can't decrypt clips.
 
 ## Sync rules
 
-- Only changes are sent. Whatever is on the clipboard at startup isn't pushed.
-- Each side keeps its newest local clip until it's acked, and resends it after
-  every reconnect. Nothing is lost when the link drops mid-copy.
-- On receiving a clip, a side ignores it if it has a newer local copy
-  (last writer wins after clock-offset correction). Otherwise it writes the
-  clip to the clipboard.
-- Echo suppression: each side remembers the SHA-256 of the last text it saw or
-  wrote, and doesn't send a "change" whose hash matches.
-- The PC relays clips between multiple phones.
+- A device keeps its newest clip (**current**). Clips are ordered by
+  `(time, id)`.
+- On a local copy, the device stamps the clip with `max(now, current.time+1)`,
+  seals it, and sends it to every link.
+- On receiving a clip:
+  - drop it if its id was already seen or it isn't newer than current;
+  - drop it if it doesn't decrypt;
+  - otherwise make it current, forward it to every other link, and write it to
+    the clipboard.
+- When a link comes up, each side sends its current clip. That's how offline
+  devices catch up, and the newest clip wins everywhere.
+- Echo suppression: each device remembers the hash of the last content it saw
+  or wrote, so writing a received clip is not mistaken for a new copy.
+- Whatever is on the clipboard at startup is not sent. Clips marked sensitive
+  by a password manager are never sent: Windows
+  `ExcludeClipboardContentFromMonitorProcessing`,
+  `CanIncludeInClipboardHistory=0` or `CanUploadToCloudClipboard=0`; Android
+  `EXTRA_IS_SENSITIVE`.
