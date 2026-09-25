@@ -59,9 +59,10 @@ type storeData struct {
 // Store persists accounts as a JSON file. It's small (a handful of users and
 // devices), so the whole thing is kept in memory and rewritten on change.
 type Store struct {
-	mu   sync.Mutex
-	path string
-	d    storeData
+	mu     sync.Mutex
+	path   string
+	d      storeData
+	closed bool
 }
 
 var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
@@ -102,7 +103,17 @@ func OpenStore(dir string) (*Store, error) {
 	return s, nil
 }
 
+// Close stops all further writes to disk (in-memory state stays usable).
+func (s *Store) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+}
+
 func (s *Store) saveLocked() error {
+	if s.closed {
+		return nil
+	}
 	b, _ := json.MarshalIndent(&s.d, "", "  ")
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {

@@ -25,6 +25,9 @@ func setup(t *testing.T) (*server.Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Runs before the temp dir is removed: devices disconnecting after the
+	// test must not write into it.
+	t.Cleanup(st.Close)
 	s := server.New(st, server.SignupInvite)
 	s.Logf = quiet
 	ts := httptest.NewServer(s)
@@ -160,6 +163,7 @@ func TestRevokeKicks(t *testing.T) {
 
 func TestServerPlusDirectFallback(t *testing.T) {
 	st, _ := server.OpenStore(t.TempDir())
+	t.Cleanup(st.Close)
 	s := server.New(st, server.SignupInvite)
 	s.Logf = quiet
 	ts := httptest.NewServer(s)
