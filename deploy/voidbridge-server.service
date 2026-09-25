@@ -1,0 +1,26 @@
+[Unit]
+Description=VoidBridge clipboard sync server
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/voidbridge-server serve
+StateDirectory=voidbridge
+DynamicUser=yes
+Restart=always
+RestartSec=3
+# Hardening: the server only needs its state directory and the network.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

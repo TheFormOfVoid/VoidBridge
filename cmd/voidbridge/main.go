@@ -19,11 +19,11 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/clipboard"
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/config"
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/discovery"
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/engine"
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/protocol"
+	"github.com/TheFormOfVoid/VoidBridge/internal/clipboard"
+	"github.com/TheFormOfVoid/VoidBridge/internal/config"
+	"github.com/TheFormOfVoid/VoidBridge/internal/discovery"
+	"github.com/TheFormOfVoid/VoidBridge/internal/engine"
+	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 )
 
 var version = "dev"

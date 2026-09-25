@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/TheFormOfVoid/VoidBridge/pc/internal/protocol"
+	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 )
 
 const DefaultPort = 47829
