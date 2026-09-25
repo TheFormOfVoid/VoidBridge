@@ -22,6 +22,24 @@ Pick one, or combine them:
 With a server, devices on the same Wi-Fi also connect directly. At home, sync
 keeps working even if the server is down.
 
+### Do I need a server?
+
+Usually not. If your devices are on the same Wi-Fi, or all run Tailscale, a
+sync code works everywhere without anything else to set up or maintain. Start
+with that.
+
+A server is worth adding when one of these matters to you:
+
+| Benefit | Why a sync code falls short |
+|---|---|
+| **Removing a lost or stolen device** | Anyone who has the code stays in the group. To lock them out you'd have to create a new code and re-enter it on every device. With a server you remove that device in one click, and your other devices keep working. |
+| **Many devices** | Without a server, every device connects to every other one, so 5 devices need up to 10 connections and each phone keeps 4 open. With a server, each device keeps a single connection, which is easier on phone batteries. With 2 or 3 devices there's no difference. |
+| **Devices that are rarely online together** | The server keeps your latest copy. If you copy something on your phone and the phone goes offline, your laptop still gets it when it comes online later. Without a server, a copy only arrives once both devices are online at the same time. |
+| **Sharing with people who don't use Tailscale** | Only applies if the server is reachable from the internet (e.g. behind a Cloudflare Tunnel). They then just install the app and sign in with an invite. Over Tailscale alone, everyone still needs Tailscale. |
+
+You can start with a sync code and switch to a server later: set up the
+server, then sign in with your account on each device instead of the code.
+
 **Privacy:** everything is end-to-end encrypted. With a sync code, the key
 comes from the code. With a server account, it comes from your password,
 which never leaves your devices. The server only passes along data it can't
