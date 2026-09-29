@@ -283,7 +283,7 @@ func (l *link) readLoop() {
 			l.c.Send(&protocol.Message{Type: protocol.TypePong})
 		case protocol.TypePeers:
 			l.m.learn(msg.Peers)
-		case protocol.TypeClip:
+		default: // clips and file transfers
 			l.m.Node.Handle(l, msg)
 		}
 	}

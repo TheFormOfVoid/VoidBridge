@@ -1,6 +1,8 @@
 package server_test
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"net/http/httptest"
@@ -195,4 +197,56 @@ func TestServerPlusDirectFallback(t *testing.T) {
 	ts.Close()
 	phone.cb.WriteText("server is down")
 	eventually(t, func() bool { return pc.cb.Text() == "server is down" })
+}
+
+type fileSink struct{ got chan []byte }
+
+type memWriter struct {
+	buf  bytes.Buffer
+	sink *fileSink
+}
+
+func (w *memWriter) Write(p []byte) error    { w.buf.Write(p); return nil }
+func (w *memWriter) Commit() (string, error) { w.sink.got <- w.buf.Bytes(); return "memory", nil }
+func (w *memWriter) Abort()                  {}
+
+func (s *fileSink) Begin(protocol.FileMeta, node.FileSender) (node.FileWriter, error) {
+	return &memWriter{sink: s}, nil
+}
+func (s *fileSink) Received(protocol.FileMeta, node.FileSender, string, error) {}
+func (s *fileSink) Progress(string, protocol.FileMeta, node.FileSender, int64) {}
+
+func TestFileThroughServer(t *testing.T) {
+	_, base := setup(t)
+	(&relay.API{Base: base}).Register("alice", keys("alice", "pw"), "", protocol.Identity{ID: "setup"})
+	pc := connect(t, base, "alice", "pw", "pc")
+	phone := connect(t, base, "alice", "pw", "phone")
+	sink := &fileSink{got: make(chan []byte, 1)}
+	phone.n.SetFileReceiver(sink)
+	eventually(t, func() bool { return len(pc.n.Status().Devices) == 1 })
+
+	data := bytes.Repeat([]byte("voidbridge"), 300_000) // 3 MB, several chunks
+	err := pc.n.SendFile(context.Background(), "phone", protocol.FileMeta{Name: "a.bin", Size: int64(len(data))}, bytes.NewReader(data), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := <-sink.got; !bytes.Equal(got, data) {
+		t.Fatal("file corrupted through the server")
+	}
+}
+
+func TestFileToOfflineDevice(t *testing.T) {
+	_, base := setup(t)
+	(&relay.API{Base: base}).Register("alice", keys("alice", "pw"), "", protocol.Identity{ID: "setup"})
+	pc := connect(t, base, "alice", "pw", "pc")
+	phone := connect(t, base, "alice", "pw", "phone")
+	eventually(t, func() bool { return len(pc.n.Status().Devices) == 1 })
+	close(phone.stop)
+	phone.stop = make(chan struct{}) // keep the cleanup from closing it twice
+	// The server may still list it for a moment; either way the send must fail fast.
+	start := time.Now()
+	err := pc.n.SendFile(context.Background(), "phone", protocol.FileMeta{Name: "a", Size: 1}, bytes.NewReader([]byte{1}), nil)
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("err=%v after %v", err, time.Since(start))
+	}
 }

@@ -47,6 +47,12 @@ const (
 	TypeClip    = "clip"
 	TypePeers   = "peers"
 	TypeDevices = "devices"
+
+	// File transfers go to one device (Message.To), never flooded.
+	TypeFileStart = "file_start" // body: sealed JSON FileMeta
+	TypeFileChunk = "file_chunk" // body: sealed bytes; Seq counts from 0
+	TypeFileEnd   = "file_end"   // body: sealed hex SHA-256 of the file; Seq = chunk count
+	TypeFileAck   = "file_ack"   // receiver -> sender; Error set on failure
 )
 
 // Clip content types.
@@ -85,6 +91,11 @@ type Message struct {
 
 	// peers / devices
 	Peers []PeerInfo `json:"peers,omitempty"`
+
+	// files
+	To    string `json:"to,omitempty"` // target device id
+	Seq   int64  `json:"seq,omitempty"`
+	Error string `json:"error,omitempty"`
 
 	Body []byte `json:"-"`
 }
@@ -253,6 +264,54 @@ func gcm(key []byte) cipher.AEAD {
 		panic(err)
 	}
 	return aead
+}
+
+// ---- File transfer encryption (end to end) ----
+
+// FileMeta describes a file being sent; it travels sealed in file_start.
+type FileMeta struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Mime string `json:"mime,omitempty"`
+}
+
+// FileChunkSize is how much file data goes in one file_chunk.
+const FileChunkSize = 512 << 10
+
+// IsFile reports whether m is part of a file transfer.
+func (m *Message) IsFile() bool {
+	switch m.Type {
+	case TypeFileStart, TypeFileChunk, TypeFileEnd, TypeFileAck:
+		return true
+	}
+	return false
+}
+
+func fileAAD(m *Message) []byte {
+	return []byte("voidbridge-file-v2|" + m.Type + "|" + m.ID + "|" + m.Origin + "|" + m.To + "|" + strconv.FormatInt(m.Seq, 10))
+}
+
+// SealFile encrypts a file message's payload into m.Body. The type, ids and
+// sequence number are bound as associated data, so chunks can't be swapped,
+// reordered or redirected.
+func SealFile(contentKey []byte, m *Message, plaintext []byte) {
+	aead := gcm(contentKey)
+	nonce := make([]byte, aead.NonceSize())
+	rand.Read(nonce)
+	m.Body = aead.Seal(nonce, nonce, plaintext, fileAAD(m))
+}
+
+// OpenFile decrypts a file message's payload.
+func OpenFile(contentKey []byte, m *Message) ([]byte, error) {
+	aead := gcm(contentKey)
+	if len(m.Body) < aead.NonceSize() {
+		return nil, ErrDecrypt
+	}
+	p, err := aead.Open(nil, m.Body[:aead.NonceSize()], m.Body[aead.NonceSize():], fileAAD(m))
+	if err != nil {
+		return nil, ErrDecrypt
+	}
+	return p, nil
 }
 
 // ---- Frame encoding ----

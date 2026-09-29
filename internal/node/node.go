@@ -72,6 +72,10 @@ type Node struct {
 	lastHash  string
 	lastSeq   uint64
 	lastSync  time.Time
+
+	fileRecv FileReceiver
+	fileAcks map[string]chan string
+	incoming map[string]*incoming
 }
 
 // New creates a node. hist may be nil.
@@ -83,6 +87,8 @@ func New(me protocol.Identity, keys protocol.Keys, cb clipboard.Clipboard, hist 
 		remote:   map[Link][]protocol.PeerInfo{},
 		seen:     map[string]struct{}{},
 		settings: Settings{SkipSensitive: true},
+		fileAcks: map[string]chan string{},
+		incoming: map[string]*incoming{},
 	}
 }
 
@@ -108,12 +114,16 @@ func (n *Node) Run(stop <-chan struct{}) {
 	}
 	t := time.NewTicker(PollInterval)
 	defer t.Stop()
+	expire := time.NewTicker(5 * time.Second)
+	defer expire.Stop()
 	for {
 		select {
 		case <-stop:
 			return
 		case <-t.C:
 			n.poll()
+		case <-expire.C:
+			n.expireFiles()
 		}
 	}
 }
@@ -149,8 +159,12 @@ func (n *Node) SetRemoteDevices(l Link, devs []protocol.PeerInfo) {
 	n.changed()
 }
 
-// Handle processes a clip message received on l.
+// Handle processes a clip or file message received on l.
 func (n *Node) Handle(l Link, m *protocol.Message) {
+	if m.IsFile() {
+		n.handleFile(l, m)
+		return
+	}
 	if m.Type != protocol.TypeClip {
 		return
 	}

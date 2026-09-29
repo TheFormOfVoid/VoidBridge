@@ -316,7 +316,7 @@ func (c *Client) session(ctx context.Context) error {
 		switch m.Type {
 		case protocol.TypeDevices:
 			c.Node.SetRemoteDevices(l, m.Peers)
-		case protocol.TypeClip:
+		default: // clips and file transfers
 			c.Node.Handle(l, m)
 		}
 	}

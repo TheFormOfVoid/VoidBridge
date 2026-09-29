@@ -600,6 +600,35 @@ func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	s.Logf("%s/%s disconnected: %v", u.Name, se.DeviceName, err)
 }
 
+// route forwards a file message to the one device it's addressed to. It sends
+// synchronously so chunks stay in order and a slow receiver slows the sender
+// down instead of piling up in memory here.
+func (s *Server) route(from *conn, m *protocol.Message) {
+	s.hub.mu.Lock()
+	var target *conn
+	if a := s.hub.accounts[from.user]; a != nil {
+		for c := range a.conns {
+			if c.dev.DeviceID == m.To && c != from {
+				target = c
+				break
+			}
+		}
+	}
+	s.hub.mu.Unlock()
+	if target == nil {
+		if m.Type == protocol.TypeFileStart {
+			from.send(&protocol.Message{Type: protocol.TypeFileAck, ID: m.ID, To: m.Origin, Error: "that device isn't connected to the server right now"})
+		}
+		return
+	}
+	if err := target.send(m); err != nil {
+		target.cancel()
+		if m.Type != protocol.TypeFileAck {
+			from.send(&protocol.Message{Type: protocol.TypeFileAck, ID: m.ID, To: m.Origin, Error: "lost the connection to that device"})
+		}
+	}
+}
+
 func (s *Server) readLoop(ctx context.Context, c *conn) error {
 	for {
 		typ, b, err := c.ws.Read(ctx)
@@ -612,6 +641,10 @@ func (s *Server) readLoop(ctx context.Context, c *conn) error {
 		m, err := protocol.Decode(b)
 		if err != nil {
 			return err
+		}
+		if m.IsFile() && m.To != "" {
+			s.route(c, m)
+			continue
 		}
 		if m.Type != protocol.TypeClip {
 			continue
