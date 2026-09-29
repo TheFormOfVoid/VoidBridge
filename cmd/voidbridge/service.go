@@ -19,9 +19,10 @@ import (
 // Service runs sync according to the config and rebuilds it when the config
 // changes.
 type Service struct {
-	cfg  *config.Config
-	cb   clipboard.Clipboard
-	hist *node.History
+	cfg   *config.Config
+	xfers *transfers
+	cb    clipboard.Clipboard
+	hist  *node.History
 	// OnUpdate is called (from any goroutine) when anything visible changed.
 	OnUpdate func()
 
@@ -37,7 +38,9 @@ type Service struct {
 func NewService(cfg *config.Config) *Service {
 	h := node.NewHistory()
 	h.SetEnabled(cfg.History)
-	return &Service{cfg: cfg, cb: clipboard.System(), hist: h}
+	s := &Service{cfg: cfg, cb: clipboard.System(), hist: h}
+	s.xfers = &transfers{onChange: s.update}
+	return s
 }
 
 func (s *Service) identity() protocol.Identity {
@@ -62,6 +65,7 @@ func (s *Service) Restart() {
 	s.peerErr, s.relay, s.signedOut = "", relay.State{}, false
 
 	keys, ok := s.cfg.Keys()
+	go s.syncMenu()
 	if !ok {
 		s.update()
 		return
@@ -69,7 +73,11 @@ func (s *Service) Restart() {
 	stop := make(chan struct{})
 	s.stop = stop
 	n := node.New(s.identity(), keys, s.cb, s.hist)
-	n.OnChange = s.update
+	n.OnChange = func() {
+		s.rememberDevices(n.Status().Devices)
+		s.update()
+	}
+	n.SetFileReceiver(s.receiver())
 	n.SetSettings(node.Settings{Paused: s.cfg.Paused, SkipSensitive: s.cfg.SkipSensitive})
 	s.node = n
 	go n.Run(stop)

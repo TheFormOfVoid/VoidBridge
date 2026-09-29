@@ -145,8 +145,10 @@ function render() {
   // Other devices
   $("#device-count").textContent = s.devices.length || "";
   $("#device-list").innerHTML = s.devices.length
-    ? s.devices.map((d) => `<div class="card"><div class="icon">${icons[d.kind] || icons.windows}</div><div class="body"><div class="name">${esc(d.name || d.id)}</div><div class="meta">${viaTags(d.via)}</div></div></div>`).join("")
+    ? s.devices.map((d) => `<div class="card" data-drop="${esc(d.id)}"><div class="icon">${icons[d.kind] || icons.windows}</div><div class="body"><div class="name">${esc(d.name || d.id)}</div><div class="meta">${viaTags(d.via)}</div></div><button class="btn small send" data-send="${esc(d.id)}" title="Send files to ${esc(d.name)}">Send file</button></div>`).join("")
     : `<div class="empty">${setUp ? "No other devices connected right now." : "Set up VoidBridge to see your devices here."}</div>`;
+  $("#drop-hint").hidden = !s.devices.length;
+  renderTransfers();
 
   renderConnect();
   renderSettings();
@@ -280,10 +282,33 @@ async function leave() {
   await call("Leave");
 }
 
+// ---------- files ----------
+
+function renderTransfers() {
+  const t = state.transfers || [];
+  $("#files-area").hidden = !t.length;
+  $("#transfer-list").innerHTML = t.map((x) => {
+    const pct = x.size ? Math.round((100 * x.done) / x.size) : x.state === "done" ? 100 : 0;
+    const status = x.state === "active" ? `${size(x.done)} of ${size(x.size)}` : x.state === "failed" ? `<span class="error">${esc(x.error)}</span>` : `${size(x.size)} · ${esc(ago(x.time))}`;
+    const actions = x.state === "done" && x.path ? `<button class="btn small" data-open-file="${esc(x.id)}">Open</button><button class="btn small subtle" data-reveal="${esc(x.id)}">Show in folder</button>` : "";
+    return `<div class="xfer"><div class="dir" title="${x.incoming ? "Received" : "Sent"}">${x.incoming ? "↓" : "↑"}</div>
+      <div class="grow"><div class="name">${esc(x.name)}</div>
+        <div class="muted small">${x.incoming ? "from" : "to"} ${esc(x.device)} · ${status}</div>
+        ${x.state === "active" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</div>
+      <div class="actions">${actions}</div></div>`;
+  }).join("");
+}
+
 // ---------- settings ----------
 
 function renderSettings() {
   const s = state;
+  $("#recv-dir").textContent = s.receiveDir;
+  $("#set-ctxmenu").checked = s.contextMenu;
+  $("#set-clipfiles").checked = s.clipReceived;
+  $("#known-list").innerHTML = (s.known || []).length
+    ? s.known.map((d) => `<div class="known-row"><span>${esc(d.name)} <span class="muted small">· last seen ${esc(ago(d.lastSeen * 1000))}</span></span><button class="btn small subtle danger" data-forget="${esc(d.id)}">Remove</button></div>`).join("")
+    : '<span class="muted small">None yet: devices appear here once they connect.</span>';
   $("#set-autostart").checked = s.autostart;
   $("#set-sensitive").checked = s.skipSensitive;
   $("#set-history").checked = s.history;
@@ -444,6 +469,14 @@ function wire() {
     }
     const rm = e.target.closest("[data-rm]");
     if (rm) call("SetManualPeers", state.manual.filter((_, i) => i !== +rm.dataset.rm));
+    const send = e.target.closest("[data-send]");
+    if (send) call("PickAndSend", send.dataset.send);
+    const of = e.target.closest("[data-open-file]");
+    if (of) call("OpenTransfer", of.dataset.openFile);
+    const rv = e.target.closest("[data-reveal]");
+    if (rv) call("RevealTransfer", rv.dataset.reveal);
+    const fg = e.target.closest("[data-forget]");
+    if (fg) call("ForgetDevice", fg.dataset.forget);
     const clip = e.target.closest(".clip");
     if (clip) call("CopyFromHistory", clip.dataset.id).then(([, ok]) => ok && toast("Copied to all your devices"));
   });
@@ -462,6 +495,21 @@ function wire() {
     $("#manual-input").value = "";
   };
   $("#history-search").oninput = renderHistory;
+  $("#files-clear").onclick = () => call("ClearTransfers");
+  $("#recv-open").onclick = () => call("OpenReceiveFolder");
+  $("#recv-change").onclick = () => call("ChooseReceiveFolder");
+  ["#set-ctxmenu", "#set-clipfiles"].forEach((id) => ($(id).onchange = () => call("SetFileSettings", $("#set-ctxmenu").checked, $("#set-clipfiles").checked)));
+  window.runtime?.EventsOn?.("error", (msg) => toast(msg, true));
+  // Drag files from Explorer onto a device card to send them.
+  window.runtime?.OnFileDrop?.((x, y, paths) => {
+    const card = document.elementFromPoint(x, y)?.closest("[data-drop]");
+    if (card && paths?.length) {
+      call("SendFiles", card.dataset.drop, paths);
+      toast(`Sending ${paths.length} file${paths.length > 1 ? "s" : ""}…`);
+    } else if (paths?.length) {
+      toast("Drop files onto one of your devices to send them", true);
+    }
+  }, true);
   $("#history-clear").onclick = async () => {
     await call("ClearHistory");
     loadHistory();

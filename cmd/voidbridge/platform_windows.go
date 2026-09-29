@@ -58,3 +58,7 @@ func setAutostart(on bool) error {
 func openFile(path string) {
 	exec.Command("notepad.exe", path).Start()
 }
+
+func startProcess(name string, args ...string) {
+	exec.Command(name, args...).Start()
+}

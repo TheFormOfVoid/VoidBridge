@@ -13,3 +13,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+/voidbridge
+/voidbridge.exe
+/voidbridge-server

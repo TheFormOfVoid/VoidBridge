@@ -240,3 +240,37 @@ func (Windows) Seq() (uint64, error) {
 	r, _, _ := procGetClipboardSequenceNumber.Call()
 	return uint64(r), nil
 }
+
+const cfHDrop = 15
+
+var cfDropEffect = registerFormat("Preferred DropEffect")
+
+// WriteFiles puts files on the clipboard as if they were copied in
+// Explorer, so Ctrl+V pastes them into a folder, an email, a chat, ...
+func WriteFiles(paths []string) error {
+	// DROPFILES header (20 bytes): offset of the list, a point, fNC, fWide.
+	data := make([]byte, 20)
+	data[0] = 20
+	data[16] = 1 // fWide: UTF-16 paths
+	for _, p := range paths {
+		u, err := syscall.UTF16FromString(p)
+		if err != nil {
+			return err
+		}
+		data = append(data, unsafe.Slice((*byte)(unsafe.Pointer(&u[0])), len(u)*2)...)
+	}
+	data = append(data, 0, 0) // the list ends with an empty string
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := open(); err != nil {
+		return err
+	}
+	defer procCloseClipboard.Call()
+	procEmptyClipboard.Call()
+	if err := setHGlobal(cfHDrop, data); err != nil {
+		return err
+	}
+	setHGlobal(cfDropEffect, []byte{1, 0, 0, 0}) // DROPEFFECT_COPY
+	return setHGlobal(cfOurs, []byte{1, 0, 0, 0})
+}

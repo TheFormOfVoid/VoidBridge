@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"fmt"
@@ -47,6 +48,7 @@ func setupLog() string {
 
 func main() {
 	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
+	sendTo := flag.String("send", "", "send the files given as arguments to this device id (used by the right-click menu)")
 	flag.Parse()
 
 	logPath := setupLog()
@@ -71,15 +73,27 @@ func main() {
 		Height:            700,
 		MinWidth:          780,
 		MinHeight:         540,
-		StartHidden:       *hidden && !first,
+		StartHidden:       (*hidden || *sendTo != "") && !first,
 		HideWindowOnClose: true,
 		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
 		AssetServer:       &assetserver.Options{Assets: assets},
-		OnStartup:         app.startup,
-		Bind:              []any{app},
+		OnStartup: func(ctx context.Context) {
+			app.startup(ctx)
+			if *sendTo != "" {
+				go app.sendFromMenu(*sendTo, flag.Args(), "")
+			}
+		},
+		Bind:        []any{app},
+		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true},
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "com.theformofvoid.voidbridge",
-			OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.Show() },
+			UniqueId: "com.theformofvoid.voidbridge",
+			OnSecondInstanceLaunch: func(d options.SecondInstanceData) {
+				if dev, paths := parseSend(d.Args); dev != "" {
+					go app.sendFromMenu(dev, paths, d.WorkingDirectory)
+					return
+				}
+				app.Show()
+			},
 		},
 		Windows: &windows.Options{
 			WebviewIsTransparent: true,
@@ -149,6 +163,20 @@ func runTray(app *App) {
 			}
 		}()
 	}, nil)
+}
+
+// parseSend extracts "--send <device> <files...>" from a second instance's
+// command line.
+func parseSend(args []string) (string, []string) {
+	for i, a := range args {
+		if (a == "--send" || a == "-send") && i+1 < len(args) {
+			return args[i+1], args[i+2:]
+		}
+		if v, ok := strings.CutPrefix(a, "--send="); ok {
+			return v, args[i+1:]
+		}
+	}
+	return "", nil
 }
 
 func describe(st State) string {

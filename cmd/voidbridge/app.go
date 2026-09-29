@@ -8,6 +8,7 @@ import (
 	"image"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,20 @@ type State struct {
 	LocalIPs   []string      `json:"localIPs"`
 	Port       int           `json:"port"`
 	HistoryLen int           `json:"historyLen"`
+
+	ReceiveDir   string      `json:"receiveDir"`
+	ContextMenu  bool        `json:"contextMenu"`
+	ClipReceived bool        `json:"clipReceived"`
+	Transfers    []Transfer  `json:"transfers"`
+	Known        []KnownView `json:"known"`
+}
+
+// KnownView is a remembered device, for the settings list.
+type KnownView struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	LastSeen int64  `json:"lastSeen"`
 }
 
 func (a *App) State() State {
@@ -118,6 +133,14 @@ func (a *App) State() State {
 	}
 	if st.Devices == nil {
 		st.Devices = []node.Device{}
+	}
+	st.ReceiveDir = a.cfg.ReceiveFolder()
+	st.ContextMenu = !a.cfg.HideContextMenu
+	st.ClipReceived = !a.cfg.NoClipReceived
+	st.Transfers = a.svc.xfers.snapshot()
+	st.Known = []KnownView{}
+	for id, d := range a.cfg.KnownDevices() {
+		st.Known = append(st.Known, KnownView{ID: id, Name: d.Name, Kind: d.Kind, LastSeen: d.LastSeen * 1000})
 	}
 	if st.Manual == nil {
 		st.Manual = []string{}
@@ -500,3 +523,108 @@ func (a *App) Quit() {
 	a.svc.Stop()
 	runtime.Quit(a.ctx)
 }
+
+// ---- files ----
+
+// sendFromMenu handles "Send with VoidBridge" from Explorer's right-click menu.
+func (a *App) sendFromMenu(deviceID string, paths []string, workDir string) {
+	var clean []string
+	for _, p := range paths {
+		if !filepath.IsAbs(p) && workDir != "" {
+			p = filepath.Join(workDir, p)
+		}
+		clean = append(clean, p)
+	}
+	if len(clean) == 0 {
+		return
+	}
+	if err := a.svc.SendFiles(deviceID, clean); err != nil {
+		showMessage("VoidBridge", err.Error())
+	}
+}
+
+// SendFiles sends files to a device (from the UI).
+func (a *App) SendFiles(deviceID string, paths []string) error {
+	return a.svc.SendFiles(deviceID, paths)
+}
+
+// PickAndSend lets the user choose files, then sends them to a device.
+func (a *App) PickAndSend(deviceID string) error {
+	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose files to send"})
+	if err != nil || len(paths) == 0 {
+		return err
+	}
+	go func() {
+		if err := a.svc.SendFiles(deviceID, paths); err != nil {
+			runtime.EventsEmit(a.ctx, "error", err.Error())
+		}
+	}()
+	return nil
+}
+
+// ChooseReceiveFolder picks where received files go.
+func (a *App) ChooseReceiveFolder() (string, error) {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Where should received files go?", DefaultDirectory: a.cfg.ReceiveFolder()})
+	if err != nil || dir == "" {
+		return a.cfg.ReceiveFolder(), err
+	}
+	a.cfg.ReceiveDir = dir
+	return dir, a.save()
+}
+
+// OpenReceiveFolder shows the received-files folder.
+func (a *App) OpenReceiveFolder() {
+	dir := a.cfg.ReceiveFolder()
+	os.MkdirAll(dir, 0o755)
+	openWithDefaultApp(dir)
+}
+
+// SetFileSettings changes the right-click menu and clipboard options.
+func (a *App) SetFileSettings(contextMenu, clipReceived bool) error {
+	a.cfg.HideContextMenu = !contextMenu
+	a.cfg.NoClipReceived = !clipReceived
+	if err := a.save(); err != nil {
+		return err
+	}
+	go a.svc.syncMenu()
+	return nil
+}
+
+func (a *App) transfer(id string) *Transfer {
+	for _, t := range a.svc.xfers.snapshot() {
+		if t.ID == id {
+			return &t
+		}
+	}
+	return nil
+}
+
+// OpenTransfer opens a sent or received file.
+func (a *App) OpenTransfer(id string) {
+	if t := a.transfer(id); t != nil && t.Path != "" {
+		openWithDefaultApp(t.Path)
+	}
+}
+
+// RevealTransfer shows a file in Explorer.
+func (a *App) RevealTransfer(id string) {
+	if t := a.transfer(id); t != nil && t.Path != "" {
+		revealInExplorer(t.Path)
+	}
+}
+
+// ClearTransfers empties the finished transfers list.
+func (a *App) ClearTransfers() {
+	a.svc.xfers.update(func() {
+		var keep []*Transfer
+		for _, t := range a.svc.xfers.list {
+			if t.State == "active" {
+				keep = append(keep, t)
+			}
+		}
+		a.svc.xfers.list = keep
+	})
+}
+
+// ForgetDevice removes a device from the right-click menu.
+func (a *App) ForgetDevice(id string) { a.svc.ForgetDevice(id) }

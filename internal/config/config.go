@@ -42,7 +42,32 @@ type Config struct {
 	History       bool `json:"history"`
 	Port          int  `json:"port"`
 
+	// Files
+	ReceiveDir      string                 `json:"receive_dir,omitempty"` // empty: Downloads\VoidBridge
+	HideContextMenu bool                   `json:"hide_context_menu,omitempty"`
+	NoClipReceived  bool                   `json:"no_clip_received,omitempty"` // don't put received files on the clipboard
+	Known           map[string]KnownDevice `json:"known,omitempty"`            // devices seen, for the right-click menu
+
 	mu sync.Mutex
+}
+
+// KnownDevice is a device this PC has seen, offered in "Send with VoidBridge".
+type KnownDevice struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	LastSeen int64  `json:"last_seen"` // unix seconds
+}
+
+// ReceiveFolder returns where received files go.
+func (c *Config) ReceiveFolder() string {
+	if c.ReceiveDir != "" {
+		return c.ReceiveDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "Downloads", "VoidBridge")
 }
 
 // Dir returns (and creates) the settings directory.
@@ -135,4 +160,52 @@ func (c *Config) SetMaster(master []byte) error {
 func (c *Config) Leave() {
 	c.Mode, c.Code, c.MasterKey = ModeNone, "", ""
 	c.Server, c.Username, c.Token, c.Admin = "", "", "", false
+}
+
+// Remember records a device as seen now. It reports whether the menu needs
+// updating (new device or new name). Call Save afterwards.
+func (c *Config) Remember(id, name, kind string, now int64) (menuChanged, dirty bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Known == nil {
+		c.Known = map[string]KnownDevice{}
+	}
+	old, ok := c.Known[id]
+	if ok && old.Name == name && old.Kind == kind && now-old.LastSeen < 3600 {
+		return false, false
+	}
+	c.Known[id] = KnownDevice{Name: name, Kind: kind, LastSeen: now}
+	return !ok || old.Name != name, true
+}
+
+// ForgetOlderThan drops devices not seen since cutoff; reports if any were.
+func (c *Config) ForgetOlderThan(cutoff int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	gone := false
+	for id, d := range c.Known {
+		if d.LastSeen < cutoff {
+			delete(c.Known, id)
+			gone = true
+		}
+	}
+	return gone
+}
+
+// Forget removes one device.
+func (c *Config) Forget(id string) {
+	c.mu.Lock()
+	delete(c.Known, id)
+	c.mu.Unlock()
+}
+
+// KnownDevices returns a copy of the remembered devices.
+func (c *Config) KnownDevices() map[string]KnownDevice {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]KnownDevice, len(c.Known))
+	for id, d := range c.Known {
+		out[id] = d
+	}
+	return out
 }

@@ -38,6 +38,11 @@
       <div class="cards" id="this-device"></div>
       <h2 class="section-title">Other devices <span class="count" id="device-count"></span></h2>
       <div class="cards" id="device-list"></div>
+      <p class="muted small" id="drop-hint" hidden>Tip: drag files onto a device to send them, or right-click a file in Explorer → <b>Send with VoidBridge</b>.</p>
+      <div id="files-area" hidden>
+        <h2 class="section-title">Files <button class="btn subtle small" id="files-clear">Clear</button></h2>
+        <div class="panel" id="transfer-list"></div>
+      </div>
       <div id="latest"></div>
     </section>
 
@@ -156,6 +161,25 @@
         <div class="setting">
           <div><b>Device name</b><p class="muted">How this PC appears on your other devices.</p></div>
           <form class="inline-form" id="name-form"><input id="set-name"><button class="btn">Save</button></form>
+        </div>
+      </div>
+      <h2 class="section-title">Files</h2>
+      <div class="panel">
+        <div class="setting">
+          <div><b>Received files folder</b><p class="muted mono small" id="recv-dir"></p></div>
+          <div class="inline-form"><button class="btn" id="recv-open">Open</button><button class="btn" id="recv-change">Change…</button></div>
+        </div>
+        <label class="setting">
+          <div><b>"Send with VoidBridge" in the right-click menu</b><p class="muted">Right-click any file in Explorer to send it to one of your devices. On Windows 11 it's under "Show more options".</p></div>
+          <input type="checkbox" class="switch" id="set-ctxmenu">
+        </label>
+        <label class="setting">
+          <div><b>Put received files on the clipboard</b><p class="muted">So you can paste a file you just received with Ctrl+V.</p></div>
+          <input type="checkbox" class="switch" id="set-clipfiles">
+        </label>
+        <div class="setting column">
+          <div><b>Devices in the right-click menu</b><p class="muted">Devices you've connected with. Remove ones you no longer use.</p></div>
+          <div id="known-list"></div>
         </div>
       </div>
       <div class="panel">
