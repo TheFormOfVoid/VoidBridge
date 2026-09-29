@@ -10,10 +10,13 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
+import android.widget.Toast
 import com.theformofvoid.voidbridge.core.FileMeta
 import com.theformofvoid.voidbridge.core.FileReceiver
 import com.theformofvoid.voidbridge.core.FileSender
@@ -161,6 +164,10 @@ class ReceivedFiles(private val ctx: Context, private val prefs: Prefs, private 
             notes.done(id, ctx.getString(R.string.receive_failed, name, from.name), error, null)
         } else {
             notes.done(id, ctx.getString(R.string.received_from, name, from.name), ctx.getString(R.string.tap_to_open), Files.viewIntent(Uri.parse(where), mime))
+            // Like Android's own "copied" popup when a clip arrives.
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(ctx, ctx.getString(R.string.received_toast, name, from.name), Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }

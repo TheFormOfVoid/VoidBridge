@@ -80,6 +80,7 @@
     <string name="received_from">%1$s from %2$s</string>
     <string name="receive_failed">Couldn\'t receive %1$s from %2$s</string>
     <string name="tap_to_open">Tap to open</string>
+    <string name="received_toast">📥 %1$s from %2$s</string>
     <string name="section_files">Files</string>
     <string name="files_help">To send a file, share it from any app and pick “Send to a device” or one of your devices. Files sent to this phone are saved here:</string>
     <string name="folder_now">📁 %1$s</string>
