@@ -47,6 +47,10 @@ func TestKnownAnswers(t *testing.T) {
 	if got := string(clipAAD(m)); got != "voidbridge-clip-v2|c1|d1|1700000000000|text|text/plain" {
 		t.Errorf("aad = %s", got)
 	}
+	f := &Message{Type: TypeFileChunk, ID: "f1", Origin: "d1", To: "d2", Seq: 3}
+	if got := string(fileAAD(f)); got != "voidbridge-file-v2|file_chunk|f1|d1|d2|3" {
+		t.Errorf("file aad = %s", got)
+	}
 	check("encoded frame", Encode(&Message{Type: TypePing, Body: []byte{9}}), "0000000c7b2274223a2270696e67227d09")
 }
 

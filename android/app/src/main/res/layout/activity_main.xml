@@ -38,6 +38,13 @@
                 android:layout_marginTop="6dp"
                 android:textColor="@color/warn"
                 android:visibility="gone" />
+            <Button
+                android:id="@+id/send_file"
+                style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/send_file"
+                android:visibility="gone" />
             <Switch
                 android:id="@+id/sync_switch"
                 android:layout_width="match_parent"
@@ -214,6 +221,38 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:text="@string/skip_sensitive" />
+        </LinearLayout>
+
+        <!-- Files -->
+        <TextView style="@style/Section" android:text="@string/section_files" />
+        <LinearLayout style="@style/Card">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/files_help"
+                android:textSize="13sp" />
+            <TextView
+                android:id="@+id/folder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button
+                    android:id="@+id/folder_change"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/folder_change" />
+                <Button
+                    android:id="@+id/folder_reset"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/folder_reset" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- Setup checklist -->

@@ -23,6 +23,11 @@ import com.theformofvoid.voidbridge.core.Protocol
 import com.theformofvoid.voidbridge.core.ServerApi
 
 class MainActivity : Activity() {
+    companion object {
+        private const val REQ_FILES = 10
+        private const val REQ_FOLDER = 11
+    }
+
     private lateinit var prefs: Prefs
     private val adbCommand by lazy { "adb shell pm grant $packageName android.permission.READ_LOGS" }
     private var serverTab = true
@@ -79,7 +84,80 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
 
+        v<Button>(R.id.send_file).setOnClickListener { pickFiles(null) }
+        v<Button>(R.id.folder_change).setOnClickListener {
+            try {
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_FOLDER)
+            } catch (_: Exception) {
+                Toast.makeText(this, R.string.no_folder_picker, Toast.LENGTH_LONG).show()
+            }
+        }
+        v<Button>(R.id.folder_reset).setOnClickListener {
+            releaseFolder()
+            prefs.receiveTree = ""
+            refresh()
+        }
+
         if (prefs.enabled && prefs.configured) SyncService.start(this)
+        handleSendTo(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSendTo(intent)
+    }
+
+    // ---- files ----
+
+    private var pickTarget: String? = null
+
+    /** A device shortcut from the launcher: pick files for that device. */
+    private fun handleSendTo(i: Intent?) {
+        if (i?.action == Shortcuts.ACTION_SEND_TO) pickFiles(i.getStringExtra(Shortcuts.EXTRA_DEVICE))
+    }
+
+    private fun pickFiles(device: String?) {
+        pickTarget = device
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        startActivityForResult(i, REQ_FILES)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data == null) return
+        when (requestCode) {
+            REQ_FILES -> {
+                val uris = data.clipData?.let { c -> List(c.itemCount) { c.getItemAt(it).uri } } ?: listOfNotNull(data.data)
+                if (uris.isEmpty()) return
+                startActivity(
+                    Intent(this, SendFileActivity::class.java)
+                        .setAction(Intent.ACTION_SEND_MULTIPLE)
+                        .putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                        .apply { pickTarget?.let { putExtra(Shortcuts.EXTRA_DEVICE, it) } },
+                )
+            }
+            REQ_FOLDER -> {
+                val tree = data.data ?: return
+                try {
+                    contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                } catch (e: Exception) {
+                    Toast.makeText(this, e.message, Toast.LENGTH_LONG).show()
+                    return
+                }
+                releaseFolder()
+                prefs.receiveTree = tree.toString()
+                refresh()
+            }
+        }
+    }
+
+    private fun releaseFolder() {
+        val old = prefs.receiveTree.takeIf { it.isNotEmpty() } ?: return
+        try {
+            contentResolver.releasePersistableUriPermission(Uri.parse(old), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        } catch (_: Exception) {
+        }
     }
 
     override fun onResume() {
@@ -87,6 +165,7 @@ class MainActivity : Activity() {
         SyncService.statusListener = { refresh() }
         // Android 13+ asks about log access only while we're visible.
         SyncService.instance?.startLogcatWatcher(restart = true)
+        if (prefs.configured) Shortcuts.publish(this, prefs) // not rate limited while visible
         refresh()
     }
 
@@ -270,6 +349,9 @@ class MainActivity : Activity() {
                 visibility = if (account) View.GONE else View.VISIBLE
             }
         }
+        v<Button>(R.id.send_file).visibility = if (st?.connected == true) View.VISIBLE else View.GONE
+        v<TextView>(R.id.folder).text = getString(R.string.folder_now, Files.folderLabel(this, prefs))
+        v<Button>(R.id.folder_reset).visibility = if (prefs.receiveTree.isEmpty()) View.GONE else View.VISIBLE
         v<Switch>(R.id.direct_switch).isChecked = prefs.direct
         v<Switch>(R.id.sensitive_switch).isChecked = prefs.skipSensitive
 

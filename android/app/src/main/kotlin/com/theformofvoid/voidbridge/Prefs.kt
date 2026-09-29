@@ -1,10 +1,12 @@
 package com.theformofvoid.voidbridge
 
 import android.content.Context
+import com.theformofvoid.voidbridge.core.Device
 import com.theformofvoid.voidbridge.core.Keys
 import com.theformofvoid.voidbridge.core.Protocol
 import com.theformofvoid.voidbridge.core.hexToBytes
 import com.theformofvoid.voidbridge.core.toHex
+import org.json.JSONObject
 
 /** Persistent settings. Passwords are never stored, only the derived key. */
 class Prefs(context: Context) {
@@ -68,7 +70,36 @@ class Prefs(context: Context) {
 
     val manualList: List<String> get() = manual.split(',', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }
 
+    /** Folder chosen for received files (a document tree URI), or "" for Download/VoidBridge. */
+    var receiveTree: String
+        get() = sp.getString("receive_tree", "") ?: ""
+        set(v) = sp.edit().putString("receive_tree", v).apply()
+
+    data class Known(val id: String, val name: String, val kind: String, val seen: Long)
+
+    /** Devices seen recently, for sending files to. */
+    fun knownDevices(): List<Known> {
+        val o = try { JSONObject(sp.getString("known", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        return o.keys().asSequence().mapNotNull { id ->
+            o.optJSONObject(id)?.let { Known(id, it.optString("name", id), it.optString("kind"), it.optLong("seen")) }
+        }.toList()
+    }
+
+    /** Records connected devices; true if the list of names changed. */
+    @Synchronized
+    fun remember(devices: List<Device>): Boolean {
+        val now = System.currentTimeMillis()
+        val before = knownDevices().associateBy { it.id }
+        val after = before.toMutableMap()
+        for (d in devices) after[d.id] = Known(d.id, d.name, d.kind, now)
+        after.values.removeAll { now - it.seen > 60L * 24 * 3600 * 1000 }
+        val o = JSONObject()
+        for (k in after.values) o.put(k.id, JSONObject().put("name", k.name).put("kind", k.kind).put("seen", k.seen))
+        sp.edit().putString("known", o.toString()).apply()
+        return before.mapValues { it.value.name } != after.mapValues { it.value.name }
+    }
+
     fun leave() {
-        sp.edit().remove("mode").remove("code").remove("master").remove("server").remove("username").remove("token").apply()
+        sp.edit().remove("mode").remove("code").remove("master").remove("server").remove("username").remove("token").remove("known").apply()
     }
 }

@@ -112,7 +112,7 @@ class PeerManager(
                     when (m.type) {
                         Message.PING -> c.send(Message(Message.PONG))
                         Message.PEERS -> learn(m.peers)
-                        Message.CLIP -> node.handle(this, m)
+                        else -> node.handle(this, m) // clips and files
                     }
                 }
             } catch (_: Exception) {

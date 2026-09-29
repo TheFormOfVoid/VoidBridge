@@ -27,6 +27,20 @@ class ProtocolTest {
         assertEquals("7b364ea83e6e69c4ceb6c712569e0614f6628a08ae1c4d8f8bd88871599ea039", sk.toHex())
         assertEquals("57a9fc60d3c90b7001a2379a1334f0ccd51dbce163248160116646cfcf", FrameCipher(sk, false).seal("""{"t":"ready"}""".toByteArray()).toHex())
         assertEquals("0000000c7b2274223a2270696e67227d09", Message(Message.PING, body = byteArrayOf(9)).encode().toHex())
+        assertEquals("voidbridge-file-v2|file_chunk|f1|d1|d2|3", String(Protocol.fileAAD(Message(Message.FILE_CHUNK, id = "f1", origin = "d1", to = "d2", seq = 3))))
+    }
+
+    @Test
+    fun fileSealing() {
+        val k = Keys(Protocol.masterFromCode("AAAA-BBBB-CCCC-DDDD"))
+        val m = Protocol.sealFile(k.content, Message(Message.FILE_CHUNK, id = "f", origin = "o", to = "t", seq = 7), "chunk".toByteArray())
+        val d = Message.decode(m.encode())
+        assertEquals("t", d.to)
+        assertEquals(7L, d.seq)
+        assertContentEquals("chunk".toByteArray(), Protocol.openFile(k.content, d))
+        assertNull(Protocol.openFile(k.content, d.copy(seq = 8)), "reordered chunk accepted")
+        assertNull(Protocol.openFile(k.content, d.copy(to = "x")), "redirected chunk accepted")
+        assertEquals("oops", Message.decode(Message(Message.FILE_ACK, id = "f", error = "oops").encode()).error)
     }
 
     @Test
@@ -59,9 +73,31 @@ class ProtocolTest {
 
     // ---- Kotlin devices talking to each other ----
 
+    /** Keeps received files in memory. */
+    class MemFiles(private val refuse: String? = null) : FileReceiver {
+        val files = CopyOnWriteArrayList<Pair<FileMeta, ByteArray>>()
+        val errors = CopyOnWriteArrayList<String>()
+        override fun begin(id: String, meta: FileMeta, from: FileSender): FileWriter {
+            refuse?.let { throw java.io.IOException(it) }
+            return object : FileWriter {
+                val buf = java.io.ByteArrayOutputStream()
+                override fun write(data: ByteArray) = buf.write(data)
+                override fun commit(): String {
+                    files.add(meta to buf.toByteArray())
+                    return "memory"
+                }
+                override fun abort() {}
+            }
+        }
+        override fun received(id: String, meta: FileMeta, from: FileSender, where: String?, error: String?) {
+            error?.let { errors.add(it) }
+        }
+    }
+
     class Dev(name: String, keys: Keys) : Node.Listener {
         val got = CopyOnWriteArrayList<Content>()
-        val node = Node(Identity("kt-$name", name), keys, this)
+        val files = MemFiles()
+        val node = Node(Identity("kt-$name", name), keys, this).also { it.fileReceiver = files }
         val peers = PeerManager(node, keys, port = 0, discovery = false).apply {
             allowLoopback = true
             dialIntervalMs = 50
@@ -123,7 +159,46 @@ class ProtocolTest {
         assertEquals(0, x.node.devices().size)
     }
 
+    @Test
+    fun filesBetweenDevices() {
+        val a = dev("a", group)
+        val b = dev("b", group)
+        a.peers.setManual(listOf(b.addr))
+        eventually(what = "link") { a.node.devices().isNotEmpty() && b.node.devices().isNotEmpty() }
+        val data = ByteArray((3 shl 20) + 77) { (it % 253).toByte() }
+        var progress = 0L
+        a.node.sendFile("kt-b", FileMeta("big.bin", data.size.toLong()), data.inputStream(), { progress = it })
+        assertEquals(data.size.toLong(), progress)
+        assertEquals("big.bin", b.files.files.single().first.name)
+        assertContentEquals(data, b.files.files.single().second)
+
+        a.node.sendFile("kt-b", FileMeta("empty.txt", 0), ByteArray(0).inputStream())
+        assertEquals(2, b.files.files.size)
+
+        assertFailsWith<FileException> { a.node.sendFile("kt-nobody", FileMeta("x", 1), byteArrayOf(1).inputStream()) }
+        // A size that doesn't match what's read fails on both ends.
+        assertFailsWith<FileException> { a.node.sendFile("kt-b", FileMeta("short", 10), byteArrayOf(1).inputStream()) }
+
+        b.node.fileReceiver = MemFiles(refuse = "disk full")
+        val e = assertFailsWith<FileException> { a.node.sendFile("kt-b", FileMeta("x", 1), byteArrayOf(1).inputStream()) }
+        assertTrue("disk full" in e.message!!, e.message)
+    }
+
     // ---- interop with the Go implementation (tools/interop) ----
+
+    private fun sha(b: ByteArray) = java.security.MessageDigest.getInstance("SHA-256").digest(b).toHex()
+
+    /** Sends a file to a Go device and asks it to send one back. */
+    private fun filesWithGo(node: Node, files: MemFiles, lastText: () -> String?, goId: String) {
+        val data = ByteArray((1 shl 20) + 5) { (it * 31).toByte() }
+        node.sendFile(goId, FileMeta("to-go ✓.bin", data.size.toLong()), data.inputStream())
+        eventually(what = "Go got the file") { lastText() == "got-file:to-go ✓.bin:${sha(data)}" }
+        node.localCopy(Content(Protocol.CLIP_TEXT, text = "sendfile:${node.me.id}:1500000"))
+        eventually(what = "file from Go") { files.files.any { it.first.name == "from-go.bin" } }
+        val got = files.files.first { it.first.name == "from-go.bin" }.second
+        assertContentEquals(ByteArray(1_500_000) { (it * 13).toByte() }, got)
+        eventually(what = "Go saw the ack") { lastText() == "sent-file:ok" }
+    }
 
     private fun interopEnv(): Pair<String, String>? {
         val peer = System.getenv("VOIDBRIDGE_INTEROP_PEER") ?: return null
@@ -143,6 +218,7 @@ class ProtocolTest {
         d.node.localCopy(Content(Protocol.CLIP_IMAGE, data = img, mime = "image/png"))
         val want = "got-image:" + java.security.MessageDigest.getInstance("SHA-256").digest(img).toHex()
         eventually(what = "Go got the image") { d.lastText() == want }
+        filesWithGo(d.node, d.files, d::lastText, "go-peer")
     }
 
     @Test
@@ -158,9 +234,10 @@ class ProtocolTest {
         assertNotNull(login.token)
 
         val got = CopyOnWriteArrayList<String>()
+        val files = MemFiles()
         val node = Node(me, keys, object : Node.Listener {
             override fun apply(content: Content, from: Message) { got.add(content.text) }
-        })
+        }).also { it.fileReceiver = files }
         val relay = RelayClient(base, login.token, node, object : RelayClient.Listener {
             override fun onState(connected: Boolean, error: String?) { if (connected) connectedFlag = true }
             override fun onUnauthorized() {}
@@ -170,6 +247,7 @@ class ProtocolTest {
         eventually(what = "server connection and Go device visible") { connectedFlag && node.devices().any { it.id == "go-account" } }
         node.localCopy(Content(Protocol.CLIP_TEXT, text = "ping:server"))
         eventually(what = "pong through server") { got.lastOrNull() == "pong:server" }
+        filesWithGo(node, files, { got.lastOrNull() }, "go-account")
     }
 
     @Volatile private var connectedFlag = false

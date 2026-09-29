@@ -127,6 +127,13 @@ class RelayClient(
     private inner class RelayLink(val socket: WebSocket) : Link {
         override val info = LinkInfo("server", host, "server", "Server")
         override fun send(m: Message) {
+            // OkHttp drops the connection if more than 16 MB is waiting to be
+            // sent, so large transfers wait here for the queue to drain.
+            val deadline = System.currentTimeMillis() + 60_000
+            while (socket.queueSize() > 4 shl 20) {
+                if (System.currentTimeMillis() > deadline) throw IOException("the server connection stalled")
+                Thread.sleep(10)
+            }
             if (!socket.send(m.encode().toByteString())) throw IOException("server connection closed")
         }
         override fun close() = socket.cancel()
@@ -151,7 +158,7 @@ class RelayClient(
                 val m = try { Message.decode(bytes.toByteArray()) } catch (_: Exception) { return }
                 when (m.type) {
                     Message.DEVICES -> node.setRemoteDevices(l, m.peers)
-                    Message.CLIP -> node.handle(l, m)
+                    else -> node.handle(l, m) // clips and files
                 }
             }
 

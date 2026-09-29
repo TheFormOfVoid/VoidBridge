@@ -39,6 +39,9 @@ object Protocol {
     const val CLIP_TEXT = "text"
     const val CLIP_IMAGE = "image"
 
+    /** Files are sent in chunks of this size. */
+    const val FILE_CHUNK_SIZE = 512 shl 10
+
     private val random = SecureRandom()
 
     fun normalizeCode(code: String): String = buildString {
@@ -110,21 +113,34 @@ object Protocol {
     private fun clipAAD(m: Message) =
         "voidbridge-clip-v2|${m.id}|${m.origin}|${m.time}|${m.clipType}|${m.mime}".toByteArray()
 
-    fun sealClip(contentKey: ByteArray, m: Message, plaintext: ByteArray): Message {
+    fun sealClip(contentKey: ByteArray, m: Message, plaintext: ByteArray) = m.copy(body = seal(contentKey, clipAAD(m), plaintext))
+
+    fun openClip(contentKey: ByteArray, m: Message): ByteArray? = open(contentKey, clipAAD(m), m.body)
+
+    // ---- end-to-end file encryption ----
+
+    /** Binds type, ids and sequence number, so chunks can't be swapped, reordered or redirected. */
+    internal fun fileAAD(m: Message) =
+        "voidbridge-file-v2|${m.type}|${m.id}|${m.origin}|${m.to}|${m.seq}".toByteArray()
+
+    fun sealFile(contentKey: ByteArray, m: Message, plaintext: ByteArray) = m.copy(body = seal(contentKey, fileAAD(m), plaintext))
+
+    fun openFile(contentKey: ByteArray, m: Message): ByteArray? = open(contentKey, fileAAD(m), m.body)
+
+    private fun seal(key: ByteArray, aad: ByteArray, plaintext: ByteArray): ByteArray {
         val nonce = ByteArray(12).also { random.nextBytes(it) }
         val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(contentKey, "AES"), GCMParameterSpec(128, nonce))
-        c.updateAAD(clipAAD(m))
-        return m.copy(body = nonce + c.doFinal(plaintext))
+        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+        c.updateAAD(aad)
+        return nonce + c.doFinal(plaintext)
     }
 
-    fun openClip(contentKey: ByteArray, m: Message): ByteArray? {
-        val body = m.body ?: return null
-        if (body.size < 12 + 16) return null
+    private fun open(key: ByteArray, aad: ByteArray, body: ByteArray?): ByteArray? {
+        if (body == null || body.size < 12 + 16) return null
         return try {
             val c = Cipher.getInstance("AES/GCM/NoPadding")
-            c.init(Cipher.DECRYPT_MODE, SecretKeySpec(contentKey, "AES"), GCMParameterSpec(128, body, 0, 12))
-            c.updateAAD(clipAAD(m))
+            c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, body, 0, 12))
+            c.updateAAD(aad)
             c.doFinal(body, 12, body.size - 12)
         } catch (e: Exception) {
             null
@@ -175,8 +191,13 @@ data class Message(
     val clipType: String = "",
     val mime: String = "",
     val peers: List<PeerInfo> = emptyList(),
+    val to: String = "",
+    val seq: Long = 0,
+    val error: String = "",
     val body: ByteArray? = null,
 ) {
+    val isFile: Boolean get() = type == FILE_START || type == FILE_CHUNK || type == FILE_END || type == FILE_ACK
+
     /** Newer by copy time, then id, exactly as the Go side orders clips. */
     fun newerThan(cur: Message?): Boolean =
         cur == null || time > cur.time || (time == cur.time && id > cur.id)
@@ -195,6 +216,9 @@ data class Message(
         if (clipType.isNotEmpty()) o.put("ctype", clipType)
         if (mime.isNotEmpty()) o.put("mime", mime)
         if (peers.isNotEmpty()) o.put("peers", JSONArray(peers.map { it.toJson() }))
+        if (to.isNotEmpty()) o.put("to", to)
+        if (seq != 0L) o.put("seq", seq)
+        if (error.isNotEmpty()) o.put("error", error)
         val h = o.toString().toByteArray(Charsets.UTF_8)
         val b = body ?: ByteArray(0)
         return ByteBuffer.allocate(4 + h.size + b.size).putInt(h.size).put(h).put(b).array()
@@ -208,6 +232,10 @@ data class Message(
         const val CLIP = "clip"
         const val PEERS = "peers"
         const val DEVICES = "devices"
+        const val FILE_START = "file_start" // body: sealed JSON FileMeta
+        const val FILE_CHUNK = "file_chunk" // body: sealed bytes; seq counts from 0
+        const val FILE_END = "file_end" // body: sealed hex SHA-256 of the file; seq = chunk count
+        const val FILE_ACK = "file_ack" // receiver -> sender; error set on failure
 
         fun decode(b: ByteArray): Message {
             if (b.size < 4) throw IOException("short frame")
@@ -235,6 +263,9 @@ data class Message(
                 clipType = o.optString("ctype"),
                 mime = o.optString("mime"),
                 peers = o.optJSONArray("peers")?.let { a -> List(a.length()) { PeerInfo.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
+                to = o.optString("to"),
+                seq = o.optLong("seq"),
+                error = o.optString("error"),
                 body = if (b.size > 4 + n) b.copyOfRange(4 + n, b.size) else null,
             )
         }

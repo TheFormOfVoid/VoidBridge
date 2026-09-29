@@ -25,12 +25,16 @@ import android.provider.Settings
 import android.util.Log
 import com.theformofvoid.voidbridge.core.Content
 import com.theformofvoid.voidbridge.core.Device
+import com.theformofvoid.voidbridge.core.FileMeta
 import com.theformofvoid.voidbridge.core.Identity
 import com.theformofvoid.voidbridge.core.Message
 import com.theformofvoid.voidbridge.core.Node
 import com.theformofvoid.voidbridge.core.PeerManager
 import com.theformofvoid.voidbridge.core.Protocol
 import com.theformofvoid.voidbridge.core.RelayClient
+import java.io.File
+import java.io.InputStream
+import java.util.concurrent.Executors
 
 /**
  * Foreground service that runs sync: direct links to devices on the same
@@ -51,6 +55,8 @@ class SyncService : Service(), Node.Listener {
     @Volatile private var serverErr: String? = null
     @Volatile private var peerErr: String? = null
     private var updatePosted = false
+    private lateinit var notes: TransferNotes
+    private val sendQueue = Executors.newSingleThreadExecutor { r -> Thread(r, "voidbridge-files-out").apply { isDaemon = true } }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -73,6 +79,7 @@ class SyncService : Service(), Node.Listener {
         prefs = Prefs(this)
         clipboard = getSystemService(ClipboardManager::class.java)
         createChannel()
+        notes = TransferNotes(this)
         goForeground(getString(R.string.status_starting))
     }
 
@@ -93,6 +100,7 @@ class SyncService : Service(), Node.Listener {
         val n = Node(Identity(prefs.deviceId, deviceName(), "android"), keys, this)
         n.paused = prefs.paused
         n.skipSensitive = prefs.skipSensitive
+        n.fileReceiver = ReceivedFiles(this, prefs, notes)
         node = n
 
         val wifi = applicationContext.getSystemService(WifiManager::class.java)
@@ -176,6 +184,58 @@ class SyncService : Service(), Node.Listener {
 
     fun setManual(list: List<String>) = peers?.setManual(list)
 
+    /**
+     * Sends files to a device, one after another, with notifications. If the
+     * device isn't connected yet it waits a little for it.
+     */
+    fun sendFiles(device: String, deviceName: String, items: List<Outgoing>) {
+        sendQueue.execute {
+            var ready = false
+            for (i in 0 until 40) { // up to 20 s
+                if (node?.devices()?.any { it.id == device } == true) {
+                    ready = true
+                    break
+                }
+                Thread.sleep(500)
+            }
+            for (item in items) {
+                val key = "out-" + Protocol.newId()
+                var temp: File? = null
+                try {
+                    val n = node
+                    if (!ready || n == null) throw java.io.IOException(getString(R.string.not_connected, deviceName))
+                    var size = item.size
+                    var input: InputStream = android.os.ParcelFileDescriptor.AutoCloseInputStream(item.pfd)
+                    if (size < 0) { // a stream of unknown length: copy it first
+                        val t = File.createTempFile("send-", ".tmp", cacheDir).also { temp = it }
+                        input.use { src -> t.outputStream().use { src.copyTo(it) } }
+                        size = t.length()
+                        input = t.inputStream()
+                    }
+                    val title = getString(R.string.sending_file, item.name, deviceName)
+                    notes.progress(key, title, 0, size)
+                    var last = 0L
+                    input.use {
+                        n.sendFile(device, FileMeta(item.name, size, item.mime), it, { sent ->
+                            val now = System.currentTimeMillis()
+                            if (now - last > 500) {
+                                last = now
+                                notes.progress(key, title, sent, size)
+                            }
+                        })
+                    }
+                    notes.done(key, getString(R.string.sent_file, item.name, deviceName), null, null)
+                } catch (e: Exception) {
+                    Log.w(TAG, "sending ${item.name}: $e")
+                    notes.done(key, getString(R.string.send_failed, item.name, deviceName), e.message, null)
+                } finally {
+                    try { item.pfd.close() } catch (_: Exception) {}
+                    temp?.delete()
+                }
+            }
+        }
+    }
+
     // ---- Node.Listener ----
 
     override fun apply(content: Content, from: Message) {
@@ -209,6 +269,7 @@ class SyncService : Service(), Node.Listener {
                 updatePosted = false
                 val st = status()
                 lastStatus = st
+                Shortcuts.update(this, prefs, st.devices)
                 goForeground(st.text)
                 statusListener?.invoke(st)
             }, 200)
@@ -239,6 +300,7 @@ class SyncService : Service(), Node.Listener {
         relay?.stop()
         peers?.stop()
         node?.shutdown()
+        sendQueue.shutdownNow()
         logcat?.stop()
         clipboard.removePrimaryClipChangedListener(clipListener)
         try {

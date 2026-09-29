@@ -7,10 +7,15 @@
 //
 // Both devices answer a copied "ping:X" by copying "pong:X", and answer an
 // image by copying "got-image:<sha256 of the image>", so the Kotlin side can
-// check both directions.
+// check both directions. For files, a received file is answered by copying
+// "got-file:<name>:<sha256>", and copying "sendfile:<device id>:<size>" makes
+// the Go device send "from-go.bin" (byte i = i*13) to that device, reporting
+// "sent-file:ok" or "sent-file:<error>".
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -18,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +35,47 @@ import (
 	"github.com/TheFormOfVoid/VoidBridge/internal/server"
 )
 
-func echo(name string, cb *clipboard.Memory) {
+// memFiles keeps received files in memory and answers with their hash.
+type memFiles struct{ cb *clipboard.Memory }
+
+type memWriter struct {
+	bytes.Buffer
+	meta protocol.FileMeta
+	cb   *clipboard.Memory
+}
+
+func (f memFiles) Begin(meta protocol.FileMeta, from node.FileSender) (node.FileWriter, error) {
+	return &memWriter{meta: meta, cb: f.cb}, nil
+}
+
+func (w *memWriter) Write(p []byte) error { _, err := w.Buffer.Write(p); return err }
+func (w *memWriter) Abort()               {}
+func (w *memWriter) Commit() (string, error) {
+	h := sha256.Sum256(w.Bytes())
+	reply := "got-file:" + w.meta.Name + ":" + hex.EncodeToString(h[:])
+	go func() { time.Sleep(50 * time.Millisecond); w.cb.WriteText(reply) }()
+	return "memory", nil
+}
+func (memFiles) Received(protocol.FileMeta, node.FileSender, string, error) {}
+func (memFiles) Progress(string, protocol.FileMeta, node.FileSender, int64) {}
+
+func sendBack(n *node.Node, cb *clipboard.Memory, spec string) {
+	to, size, _ := strings.Cut(spec, ":")
+	sz, _ := strconv.Atoi(size)
+	data := make([]byte, sz)
+	for i := range data {
+		data[i] = byte(i * 13)
+	}
+	err := n.SendFile(context.Background(), to, protocol.FileMeta{Name: "from-go.bin", Size: int64(sz)}, bytes.NewReader(data), nil)
+	res := "sent-file:ok"
+	if err != nil {
+		res = "sent-file:" + err.Error()
+	}
+	log.Printf("sending file to %s: %s", to, res)
+	cb.WriteText(res)
+}
+
+func echo(name string, n *node.Node, cb *clipboard.Memory) {
 	var last uint64
 	for range time.Tick(20 * time.Millisecond) {
 		seq, _ := cb.Seq()
@@ -45,6 +91,9 @@ func echo(name string, cb *clipboard.Memory) {
 		switch {
 		case c.Type == protocol.ClipText && strings.HasPrefix(c.Text, "ping:"):
 			reply = "pong:" + strings.TrimPrefix(c.Text, "ping:")
+		case c.Type == protocol.ClipText && strings.HasPrefix(c.Text, "sendfile:"):
+			go sendBack(n, cb, strings.TrimPrefix(c.Text, "sendfile:"))
+			continue
 		case c.Type == protocol.ClipImage:
 			h := sha256.Sum256(c.Data)
 			reply = "got-image:" + hex.EncodeToString(h[:])
@@ -81,7 +130,8 @@ func main() {
 	m.Discovery = false
 	go n1.Run(stop)
 	go func() { log.Fatal(m.Run(stop)) }()
-	go echo("peer", cb1)
+	n1.SetFileReceiver(memFiles{cb1})
+	go echo("peer", n1, cb1)
 
 	// Server and an account device.
 	dir, _ := os.MkdirTemp("", "vb-interop")
@@ -103,7 +153,8 @@ func main() {
 	n2 := node.New(me, akeys, cb2, nil)
 	go n2.Run(stop)
 	go (&relay.Client{Base: base, Token: api.Token, Node: n2}).Run(stop)
-	go echo("account", cb2)
+	n2.SetFileReceiver(memFiles{cb2})
+	go echo("account", n2, cb2)
 
 	fmt.Println("READY")
 	select {}

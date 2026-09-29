@@ -14,15 +14,21 @@ import java.io.FileNotFoundException
 /**
  * Serves images received from other devices, so they can go on the Android
  * clipboard (which holds images as content:// URIs). The clipboard grants
- * read access to whichever app pastes.
+ * read access to whichever app pastes. On Android 9 and older it also serves
+ * received files (under received/), so other apps can open them.
  */
 class ClipProvider : ContentProvider() {
     override fun onCreate() = true
 
     private fun file(uri: Uri): File {
-        val name = uri.lastPathSegment ?: throw FileNotFoundException()
+        val segs = uri.pathSegments
+        val name = segs.lastOrNull() ?: throw FileNotFoundException()
         if (name.contains('/') || name.startsWith(".")) throw FileNotFoundException()
-        val f = File(dir(context!!), name)
+        val f = when {
+            segs.size == 1 -> File(dir(context!!), name)
+            segs.size == 2 && segs[0] == "received" -> File(Files.appDir(context!!), name)
+            else -> throw FileNotFoundException()
+        }
         if (!f.exists()) throw FileNotFoundException()
         return f
     }
@@ -30,7 +36,9 @@ class ClipProvider : ContentProvider() {
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor =
         ParcelFileDescriptor.open(file(uri), ParcelFileDescriptor.MODE_READ_ONLY)
 
-    override fun getType(uri: Uri): String = mimeFor(uri.lastPathSegment ?: "")
+    override fun getType(uri: Uri): String = uri.lastPathSegment.orEmpty().let { n ->
+        if (uri.pathSegments.size == 2) Files.mimeFor(n) else mimeFor(n)
+    }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
         val f = file(uri)
@@ -46,6 +54,9 @@ class ClipProvider : ContentProvider() {
 
     companion object {
         fun authority(ctx: Context) = ctx.packageName + ".clips"
+
+        fun receivedUri(ctx: Context, name: String): Uri =
+            Uri.Builder().scheme("content").authority(authority(ctx)).appendPath("received").appendPath(name).build()
 
         private fun dir(ctx: Context) = File(ctx.cacheDir, "clips").apply { mkdirs() }
 
