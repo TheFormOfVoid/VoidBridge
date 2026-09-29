@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http/httptest"
@@ -248,5 +249,53 @@ func TestFileToOfflineDevice(t *testing.T) {
 	err := pc.n.SendFile(context.Background(), "phone", protocol.FileMeta{Name: "a", Size: 1}, bytes.NewReader([]byte{1}), nil)
 	if err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("err=%v after %v", err, time.Since(start))
+	}
+}
+
+// stuckSink accepts a file and then hangs, like a device that froze.
+type stuckSink struct{ entered, release chan struct{} }
+
+func (s *stuckSink) Begin(protocol.FileMeta, node.FileSender) (node.FileWriter, error) {
+	close(s.entered)
+	<-s.release
+	return nil, errors.New("released")
+}
+func (s *stuckSink) Received(protocol.FileMeta, node.FileSender, string, error) {}
+func (s *stuckSink) Progress(string, protocol.FileMeta, node.FileSender, int64) {}
+
+// A device that disconnects after the whole file was passed on to it, but
+// before it confirmed it: the server must tell the sender instead of leaving
+// it waiting for the ack timeout.
+func TestFileReceiverDisconnectsMidTransfer(t *testing.T) {
+	_, base := setup(t)
+	(&relay.API{Base: base}).Register("alice", keys("alice", "pw"), "", protocol.Identity{ID: "setup"})
+	pc := connect(t, base, "alice", "pw", "pc")
+	phone := connect(t, base, "alice", "pw", "phone")
+	sink := &stuckSink{entered: make(chan struct{}), release: make(chan struct{})}
+	defer close(sink.release)
+	phone.n.SetFileReceiver(sink)
+	eventually(t, func() bool { return len(pc.n.Status().Devices) == 1 })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- pc.n.SendFile(context.Background(), "phone", protocol.FileMeta{Name: "a", Size: 3}, bytes.NewReader([]byte{1, 2, 3}), nil)
+	}()
+	<-sink.entered
+	time.Sleep(200 * time.Millisecond) // let the rest of the file reach the phone's connection
+	// Drop the phone's connection from the server side, like a network cut.
+	api := &relay.API{Base: base}
+	if _, err := api.Login("alice", keys("alice", "pw"), protocol.Identity{ID: "tool"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.RevokeDevice("phone"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("send to a frozen device succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("sender was left waiting after the receiver disconnected")
 	}
 }

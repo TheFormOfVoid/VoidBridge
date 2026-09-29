@@ -51,6 +51,7 @@ func New(store *Store, signup string) *Server {
 	name, _ := os.Hostname()
 	s := &Server{Store: store, Signup: signup, Name: name, Version: "dev", Logf: log.Printf}
 	s.hub.accounts = map[string]*account{}
+	s.hub.inflight = map[string]transfer{}
 	s.limiter.fails = map[string]*failure{}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/info", s.info)
@@ -464,6 +465,19 @@ type account struct {
 type hub struct {
 	mu       sync.Mutex
 	accounts map[string]*account
+	// File transfers passed on but not yet acknowledged, by transfer id, so
+	// their senders can be told when the receiving device disconnects.
+	inflight map[string]transfer
+}
+
+type transfer struct {
+	from, to   *conn
+	id, origin string
+}
+
+// failTransfer tells a sender its file can't be delivered.
+func failTransfer(from *conn, id, origin, reason string) {
+	from.send(&protocol.Message{Type: protocol.TypeFileAck, ID: id, To: origin, Error: reason})
 }
 
 func (h *hub) acct(user string) *account {
@@ -594,7 +608,19 @@ func (s *Server) sync(w http.ResponseWriter, r *http.Request) {
 	ws.Close(websocket.StatusNormalClosure, "")
 	s.hub.mu.Lock()
 	delete(a.conns, c)
+	var orphaned []transfer
+	for id, t := range s.hub.inflight {
+		if t.to == c {
+			orphaned = append(orphaned, t)
+		}
+		if t.to == c || t.from == c {
+			delete(s.hub.inflight, id)
+		}
+	}
 	s.hub.mu.Unlock()
+	for _, t := range orphaned {
+		go failTransfer(t.from, t.id, t.origin, "lost the connection to that device")
+	}
 	s.Store.Touch(tok)
 	s.hub.broadcastDevices(u.Name)
 	s.Logf("%s/%s disconnected: %v", u.Name, se.DeviceName, err)
@@ -614,17 +640,24 @@ func (s *Server) route(from *conn, m *protocol.Message) {
 			}
 		}
 	}
+	switch {
+	case m.Type == protocol.TypeFileAck:
+		delete(s.hub.inflight, m.ID) // the transfer is over
+	case m.Type == protocol.TypeFileStart && target != nil:
+		s.hub.inflight[m.ID] = transfer{from: from, to: target, id: m.ID, origin: m.Origin}
+	}
 	s.hub.mu.Unlock()
 	if target == nil {
-		if m.Type == protocol.TypeFileStart {
-			from.send(&protocol.Message{Type: protocol.TypeFileAck, ID: m.ID, To: m.Origin, Error: "that device isn't connected to the server right now"})
+		// Also for chunks: the device may have left mid-transfer.
+		if m.Type != protocol.TypeFileAck {
+			failTransfer(from, m.ID, m.Origin, "that device isn't connected to the server right now")
 		}
 		return
 	}
 	if err := target.send(m); err != nil {
 		target.cancel()
 		if m.Type != protocol.TypeFileAck {
-			from.send(&protocol.Message{Type: protocol.TypeFileAck, ID: m.ID, To: m.Origin, Error: "lost the connection to that device"})
+			failTransfer(from, m.ID, m.Origin, "lost the connection to that device")
 		}
 	}
 }
