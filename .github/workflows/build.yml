@@ -45,6 +45,7 @@ jobs:
             IFS=/ read -r os arch arm <<< "$target"
             name="voidbridge-server-$os-$arch${arm:+v$arm}"
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch GOARM=$arm go build -trimpath -ldflags "$LDFLAGS" -o dist/$name ./cmd/voidbridge-server
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch GOARM=$arm go build -trimpath -ldflags "$LDFLAGS" -o dist/voidbridge-$os-$arch${arm:+v$arm} ./cmd/voidbridge-linux
           done
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -55,6 +56,10 @@ jobs:
         with:
           name: VoidBridge-server
           path: dist/voidbridge-server-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoidBridge-linux
+          path: dist/voidbridge-linux-*
 
   android:
     name: Android app

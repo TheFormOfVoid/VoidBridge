@@ -1,9 +1,10 @@
 # VoidBridge
 
 One clipboard for all your devices. Copy on one device, paste on every other
-one. It works between any mix of Windows PCs, laptops, Android phones and
-tablets. It handles text and images, like a screenshot you take with
-Win+Shift+S. There's nothing to tap and nothing to confirm.
+one. It works between any mix of Windows PCs, laptops, Android phones,
+tablets and Linux desktops like a Raspberry Pi. It handles text and images,
+like a screenshot you take with Win+Shift+S. There's nothing to tap and
+nothing to confirm.
 
 It can also send files to a chosen device: right-click a file on Windows, or
 share it on Android.
@@ -55,6 +56,7 @@ Download from [Releases](https://github.com/TheFormOfVoid/VoidBridge/releases), 
 
 - **Windows:** `VoidBridge-windows-amd64.exe` (use `arm64` for ARM laptops).
 - **Android:** `VoidBridge-android.apk` (Android 8+).
+- **Linux / Raspberry Pi desktop:** see [docs/LINUX.md](docs/LINUX.md).
 - **Server:** see [docs/SERVER.md](docs/SERVER.md).
 
 ### Windows
@@ -115,6 +117,8 @@ release's checksums first.
   **Allow installing updates** in the app. With it off, you get a notification
   and can use **Check for updates**. Android only accepts an update signed
   with the same key as the installed app.
+- **Linux:** the same as Windows, in the background
+  (`voidbridge set auto-updates off` to turn it off).
 - **Server:** run the install command from [docs/SERVER.md](docs/SERVER.md)
   again.
 
