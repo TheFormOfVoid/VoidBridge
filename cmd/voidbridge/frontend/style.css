@@ -253,3 +253,5 @@ dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top
 .bar > i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
 .known-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
 #drop-hint { margin-top: 10px; }
+.update-banner { margin: 0 0 16px; }
+.update-banner a { color: var(--accent); font-weight: 600; }

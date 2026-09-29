@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- For updates; the user allows it in Android's settings. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Lets the app briefly bring up an invisible window to read the clipboard. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -107,6 +109,10 @@
             android:authorities="${applicationId}.clips"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".BootReceiver"

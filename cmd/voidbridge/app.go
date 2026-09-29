@@ -25,6 +25,7 @@ import (
 	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 	"github.com/TheFormOfVoid/VoidBridge/internal/relay"
 	"github.com/TheFormOfVoid/VoidBridge/internal/server"
+	"github.com/TheFormOfVoid/VoidBridge/internal/update"
 )
 
 // App is bound to the frontend: every exported method is callable from JS as
@@ -37,6 +38,8 @@ type App struct {
 
 	thumbMu sync.Mutex
 	thumbs  map[string]string
+
+	upd updater
 
 	emitMu    sync.Mutex
 	emitTimer *time.Timer
@@ -52,6 +55,7 @@ func NewApp(cfg *config.Config, svc *Service, logPath string) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.svc.Restart()
+	go a.updateLoop()
 }
 
 // changed coalesces bursts of updates into one "state" event.
@@ -110,6 +114,10 @@ type State struct {
 	ClipReceived bool        `json:"clipReceived"`
 	Transfers    []Transfer  `json:"transfers"`
 	Known        []KnownView `json:"known"`
+
+	AutoUpdate bool        `json:"autoUpdate"`
+	CanUpdate  bool        `json:"canUpdate"` // false for dev builds
+	Update     *UpdateInfo `json:"update"`
 }
 
 // KnownView is a remembered device, for the settings list.
@@ -138,6 +146,9 @@ func (a *App) State() State {
 	st.ContextMenu = !a.cfg.HideContextMenu
 	st.ClipReceived = !a.cfg.NoClipReceived
 	st.Transfers = a.svc.xfers.snapshot()
+	st.AutoUpdate = !a.cfg.NoAutoUpdate
+	st.CanUpdate = update.Supported(version) && selfUpdateSupported()
+	st.Update = a.updateInfo()
 	st.Known = []KnownView{}
 	for id, d := range a.cfg.KnownDevices() {
 		st.Known = append(st.Known, KnownView{ID: id, Name: d.Name, Kind: d.Kind, LastSeen: d.LastSeen * 1000})

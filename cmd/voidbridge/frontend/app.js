@@ -103,6 +103,23 @@ function viaTags(via) {
   return (via || []).map((v) => `<span class="tag ok">${esc(v)}</span>`).join("");
 }
 
+function renderUpdate() {
+  const u = state.update;
+  const el = $("#update-banner");
+  el.hidden = !u;
+  if (!u) return;
+  const what = `<a href="#" data-release="${esc(u.page)}">What's new</a>`;
+  const text = {
+    available: `VoidBridge ${esc(u.version)} is available. ${what}`,
+    downloading: `Downloading VoidBridge ${esc(u.version)}…`,
+    ready: `VoidBridge ${esc(u.version)} is ready to install. ${what}`,
+    installing: `Installing VoidBridge ${esc(u.version)}…`,
+    failed: `Couldn't update to ${esc(u.version)}: ${esc(u.error)}`,
+  }[u.state] || "";
+  const button = ["available", "ready", "failed"].includes(u.state) ? `<button class="btn accent" id="update-install">Install and restart</button>` : "";
+  el.innerHTML = `<span>${text}</span>${button}`;
+}
+
 function render() {
   if (!state) return;
   const s = state;
@@ -148,6 +165,7 @@ function render() {
     ? s.devices.map((d) => `<div class="card" data-drop="${esc(d.id)}"><div class="icon">${icons[d.kind] || icons.windows}</div><div class="body"><div class="name">${esc(d.name || d.id)}</div><div class="meta">${viaTags(d.via)}</div></div><button class="btn small send" data-send="${esc(d.id)}" title="Send files to ${esc(d.name)}">Send file</button></div>`).join("")
     : `<div class="empty">${setUp ? "No other devices connected right now." : "Set up VoidBridge to see your devices here."}</div>`;
   $("#drop-hint").hidden = !s.devices.length;
+  renderUpdate();
   renderTransfers();
 
   renderConnect();
@@ -313,6 +331,11 @@ function renderSettings() {
   $("#set-sensitive").checked = s.skipSensitive;
   $("#set-history").checked = s.history;
   if (document.activeElement !== $("#set-name")) $("#set-name").value = s.deviceName;
+  $("#set-autoupdate").checked = s.autoUpdate;
+  $("#set-autoupdate").disabled = !s.canUpdate;
+  $("#update-check").disabled = !s.canUpdate;
+  $("#update-version").textContent = `Version ${s.version}`;
+  if (!s.canUpdate) $("#update-note").textContent = "Development builds don't update themselves.";
   $("#about").textContent = `VoidBridge ${s.version} · device id ${s.deviceId}`;
 }
 
@@ -469,6 +492,14 @@ function wire() {
     }
     const rm = e.target.closest("[data-rm]");
     if (rm) call("SetManualPeers", state.manual.filter((_, i) => i !== +rm.dataset.rm));
+    if (e.target.id === "update-install") {
+      busy(e.target, "Installing…", () => call("InstallUpdate"));
+    }
+    const rel = e.target.closest("[data-release]");
+    if (rel) {
+      e.preventDefault();
+      window.runtime?.BrowserOpenURL?.(rel.dataset.release);
+    }
     const send = e.target.closest("[data-send]");
     if (send) call("PickAndSend", send.dataset.send);
     const of = e.target.closest("[data-open-file]");
@@ -495,6 +526,12 @@ function wire() {
     $("#manual-input").value = "";
   };
   $("#history-search").oninput = renderHistory;
+  $("#set-autoupdate").onchange = () => call("SetAutoUpdate", $("#set-autoupdate").checked);
+  $("#update-check").onclick = async () => {
+    $("#update-note").textContent = "Checking…";
+    const [msg, ok] = await call("CheckForUpdates");
+    $("#update-note").textContent = !ok ? "" : msg || `VoidBridge ${state.update?.version} is available. See the Devices page.`;
+  };
   $("#files-clear").onclick = () => call("ClearTransfers");
   $("#recv-open").onclick = () => call("OpenReceiveFolder");
   $("#recv-change").onclick = () => call("ChooseReceiveFolder");

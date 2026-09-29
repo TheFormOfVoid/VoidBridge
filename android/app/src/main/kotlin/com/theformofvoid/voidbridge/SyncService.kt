@@ -56,6 +56,7 @@ class SyncService : Service(), Node.Listener {
     @Volatile private var peerErr: String? = null
     private var updatePosted = false
     private lateinit var notes: TransferNotes
+    private val updateTimer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "voidbridge-updates").apply { isDaemon = true } }
     private val sendQueue = Executors.newSingleThreadExecutor { r -> Thread(r, "voidbridge-files-out").apply { isDaemon = true } }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -80,6 +81,9 @@ class SyncService : Service(), Node.Listener {
         clipboard = getSystemService(ClipboardManager::class.java)
         createChannel()
         notes = TransferNotes(this)
+        if (AppUpdater.supported(this)) {
+            updateTimer.scheduleWithFixedDelay({ AppUpdater.check(this) }, 1, 6 * 60, java.util.concurrent.TimeUnit.MINUTES)
+        }
         goForeground(getString(R.string.status_starting))
     }
 
@@ -301,6 +305,7 @@ class SyncService : Service(), Node.Listener {
         peers?.stop()
         node?.shutdown()
         sendQueue.shutdownNow()
+        updateTimer.shutdownNow()
         logcat?.stop()
         clipboard.removePrimaryClipChangedListener(clipListener)
         try {

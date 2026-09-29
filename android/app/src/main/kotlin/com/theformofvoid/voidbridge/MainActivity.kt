@@ -26,6 +26,9 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_FILES = 10
         private const val REQ_FOLDER = 11
+
+        /** Whether the app is on screen (an update can then ask right away). */
+        @Volatile var visible = false
     }
 
     private lateinit var prefs: Prefs
@@ -98,6 +101,16 @@ class MainActivity : Activity() {
             refresh()
         }
 
+        v<Switch>(R.id.auto_update_switch).setOnCheckedChangeListener { _, on -> prefs.autoUpdate = on }
+        v<Button>(R.id.update_allow).setOnClickListener { startActivity(AppUpdater.allowInstallsIntent(this)) }
+        v<Button>(R.id.update_check).setOnClickListener { b ->
+            val out = v<TextView>(R.id.update_status)
+            out.setText(R.string.update_checking)
+            busy(b as Button, { updateMessage = AppUpdater.check(this, force = true) }) {
+                out.text = updateMessage
+            }
+        }
+
         if (prefs.enabled && prefs.configured) SyncService.start(this)
         handleSendTo(intent)
     }
@@ -110,6 +123,7 @@ class MainActivity : Activity() {
     // ---- files ----
 
     private var pickTarget: String? = null
+    private var updateMessage = ""
 
     /** A device shortcut from the launcher: pick files for that device. */
     private fun handleSendTo(i: Intent?) {
@@ -162,6 +176,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        visible = true
         SyncService.statusListener = { refresh() }
         // Android 13+ asks about log access only while we're visible.
         SyncService.instance?.startLogcatWatcher(restart = true)
@@ -170,6 +185,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        visible = false
         SyncService.statusListener = null
         super.onPause()
     }
@@ -352,6 +368,15 @@ class MainActivity : Activity() {
         v<Button>(R.id.send_file).visibility = if (st?.connected == true) View.VISIBLE else View.GONE
         v<TextView>(R.id.folder).text = getString(R.string.folder_now, Files.folderLabel(this, prefs))
         v<Button>(R.id.folder_reset).visibility = if (prefs.receiveTree.isEmpty()) View.GONE else View.VISIBLE
+        v<Switch>(R.id.auto_update_switch).apply {
+            isChecked = prefs.autoUpdate
+            isEnabled = AppUpdater.supported(this@MainActivity)
+        }
+        v<Button>(R.id.update_check).isEnabled = AppUpdater.supported(this)
+        v<Button>(R.id.update_allow).visibility = if (AppUpdater.canInstall(this)) View.GONE else View.VISIBLE
+        v<TextView>(R.id.update_version).text = getString(R.string.update_version, AppUpdater.currentVersion(this)) +
+            prefs.availableUpdate.takeIf { it.isNotEmpty() && com.theformofvoid.voidbridge.core.Updates.newer(it, AppUpdater.currentVersion(this)) }
+                ?.let { " · " + getString(R.string.update_available, it) }.orEmpty()
         v<Switch>(R.id.direct_switch).isChecked = prefs.direct
         v<Switch>(R.id.sensitive_switch).isChecked = prefs.skipSensitive
 

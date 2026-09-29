@@ -48,6 +48,8 @@ type Config struct {
 	NoClipReceived  bool                   `json:"no_clip_received,omitempty"` // don't put received files on the clipboard
 	Known           map[string]KnownDevice `json:"known,omitempty"`            // devices seen, for the right-click menu
 
+	NoAutoUpdate bool `json:"no_auto_update,omitempty"`
+
 	mu sync.Mutex
 }
 

@@ -49,7 +49,12 @@ func setupLog() string {
 func main() {
 	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
 	sendTo := flag.String("send", "", "send the files given as arguments to this device id (used by the right-click menu)")
+	waitPid := flag.Int("wait-pid", 0, "wait for this process to exit first (used when updating)")
 	flag.Parse()
+	if *waitPid != 0 {
+		waitForExit(*waitPid)
+	}
+	cleanupUpdate()
 
 	logPath := setupLog()
 	log.Printf("VoidBridge %s starting (%s/%s)", version, runtime.GOOS, runtime.GOARCH)

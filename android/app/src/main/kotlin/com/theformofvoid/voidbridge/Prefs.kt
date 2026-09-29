@@ -75,6 +75,15 @@ class Prefs(context: Context) {
         get() = sp.getString("receive_tree", "") ?: ""
         set(v) = sp.edit().putString("receive_tree", v).apply()
 
+    var autoUpdate: Boolean
+        get() = sp.getBoolean("auto_update", true)
+        set(v) = sp.edit().putBoolean("auto_update", v).apply()
+
+    /** The newest stable version seen on GitHub, if newer than this one. */
+    var availableUpdate: String
+        get() = sp.getString("available_update", "") ?: ""
+        set(v) = sp.edit().putString("available_update", v).apply()
+
     data class Known(val id: String, val name: String, val kind: String, val seen: Long)
 
     /** Devices seen recently, for sending files to. */

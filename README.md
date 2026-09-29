@@ -100,6 +100,24 @@ either way.
 The right-click menu lists devices once they've connected at least once.
 Remove old ones in **Settings**.
 
+## Updates
+
+VoidBridge checks for new versions when it starts and every 6 hours. It only
+installs stable releases, never betas, and checks each download against the
+release's checksums first.
+
+- **Windows:** with **Automatic updates** on (Settings), it installs new
+  versions by itself while the window is closed, and restarts in the tray.
+  With it off, a banner offers **Install and restart**.
+- **Android:** with **Automatic updates** on, it downloads the new version and
+  asks you to tap **Install** (on Android 12+ later updates may not need the
+  tap). The first time, Android asks you to let VoidBridge install apps: use
+  **Allow installing updates** in the app. With it off, you get a notification
+  and can use **Check for updates**. Android only accepts an update signed
+  with the same key as the installed app.
+- **Server:** run the install command from [docs/SERVER.md](docs/SERVER.md)
+  again.
+
 ## One-click phone setup (from the PC)
 
 Android 10+ stops background apps from reading the clipboard. Phone Link can

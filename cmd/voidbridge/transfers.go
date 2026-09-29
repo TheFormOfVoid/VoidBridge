@@ -74,6 +74,18 @@ func (t *transfers) snapshot() []Transfer {
 	return out
 }
 
+// busy reports whether a file is being sent or received.
+func (s *Service) busy() bool {
+	s.xfers.mu.Lock()
+	defer s.xfers.mu.Unlock()
+	for _, t := range s.xfers.list {
+		if t.State == "active" {
+			return true
+		}
+	}
+	return false
+}
+
 // receiver returns the node.FileReceiver for this service.
 func (s *Service) receiver() node.FileReceiver {
 	return &files.DirReceiver{

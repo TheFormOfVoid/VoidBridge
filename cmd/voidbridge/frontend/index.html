@@ -32,6 +32,7 @@
   <main id="main">
     <!-- Devices -->
     <section class="page" id="page-devices">
+      <div class="callout update-banner" id="update-banner" hidden></div>
       <header class="hero" id="hero"></header>
       <div id="setup-callout"></div>
       <h2 class="section-title">This computer</h2>
@@ -161,6 +162,17 @@
         <div class="setting">
           <div><b>Device name</b><p class="muted">How this PC appears on your other devices.</p></div>
           <form class="inline-form" id="name-form"><input id="set-name"><button class="btn">Save</button></form>
+        </div>
+      </div>
+      <h2 class="section-title">Updates</h2>
+      <div class="panel">
+        <label class="setting">
+          <div><b>Automatic updates</b><p class="muted">Installs new versions by itself while the window is closed. Only stable releases, never betas.</p></div>
+          <input type="checkbox" class="switch" id="set-autoupdate">
+        </label>
+        <div class="setting">
+          <div><b id="update-version"></b><p class="muted" id="update-note"></p></div>
+          <button class="btn" id="update-check">Check for updates</button>
         </div>
       </div>
       <h2 class="section-title">Files</h2>

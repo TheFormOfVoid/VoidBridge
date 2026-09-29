@@ -104,7 +104,7 @@ jobs:
         working-directory: android
         env:
           VOIDBRIDGE_VERSION_CODE: ${{ github.run_number }}
-          VOIDBRIDGE_VERSION_NAME: ${{ (inputs.release_tag || github.ref_type == 'tag') && env.VERSION || format('0.2.0-{0}', github.run_number) }}
+          VOIDBRIDGE_VERSION_NAME: ${{ (inputs.release_tag || github.ref_type == 'tag') && env.VERSION || format('dev-{0}', github.run_number) }}
         run: ./gradlew --no-daemon :core:test :app:assembleRelease
 
       - name: Go side of the interop tests
@@ -129,6 +129,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Checksums (the apps check these before installing an update)
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Replace an existing release with the same tag
         if: inputs.release_tag != ''
         env:

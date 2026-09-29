@@ -255,6 +255,48 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Updates -->
+        <TextView style="@style/Section" android:text="@string/section_updates" />
+        <LinearLayout style="@style/Card">
+            <Switch
+                android:id="@+id/auto_update_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/auto_update" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/auto_update_help"
+                android:textSize="13sp" />
+            <TextView
+                android:id="@+id/update_version"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" />
+            <TextView
+                android:id="@+id/update_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="13sp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button
+                    android:id="@+id/update_check"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/update_check" />
+                <Button
+                    android:id="@+id/update_allow"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/update_allow" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- Setup checklist -->
         <TextView style="@style/Section" android:text="@string/section_setup" />
         <TextView

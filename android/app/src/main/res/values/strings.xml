@@ -87,6 +87,24 @@
     <string name="folder_reset">Use Downloads</string>
     <string name="no_folder_picker">This phone has no folder picker</string>
 
+    <string name="section_updates">Updates</string>
+    <string name="auto_update">Automatic updates</string>
+    <string name="auto_update_help">Downloads new versions by itself and asks you to tap Install. Only stable releases, never betas. To install updates, Android needs you to allow VoidBridge to install apps once.</string>
+    <string name="update_version">Version %1$s</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_allow">Allow installing updates</string>
+    <string name="update_checking">Checking…</string>
+    <string name="channel_updates">App updates</string>
+    <string name="update_dev_build">This is a development build, which doesn\'t update itself.</string>
+    <string name="update_latest">You have the latest version (%1$s).</string>
+    <string name="update_available">VoidBridge %1$s is available</string>
+    <string name="update_open_app">Open VoidBridge to install it.</string>
+    <string name="update_need_permission">To install updates, allow VoidBridge to install apps (tap here).</string>
+    <string name="update_installing">Installing %1$s…</string>
+    <string name="update_ready">VoidBridge %1$s is ready</string>
+    <string name="update_tap_install">Tap to install the update.</string>
+    <string name="update_failed">Couldn\'t update to %1$s</string>
+
     <string name="section_manual">Sending manually</string>
     <string name="manual_help">Copies from your other devices always arrive automatically. To send from this phone without step 4, use the “Send clipboard” Quick Settings tile, the notification button, or Share → “Send to all my devices”.</string>
 </resources>
