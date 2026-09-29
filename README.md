@@ -5,6 +5,9 @@ one. It works between any mix of Windows PCs, laptops, Android phones and
 tablets. It handles text and images, like a screenshot you take with
 Win+Shift+S. There's nothing to tap and nothing to confirm.
 
+It can also send files to a chosen device: right-click a file on Windows, or
+share it on Android.
+
 It's built to stay connected. Devices reconnect within seconds and fall back
 to other routes when one fails. Anything copied while a device was offline
 reaches it when it reconnects.
@@ -75,6 +78,27 @@ to pause or quit.
 2. For automatic phone → other devices, see
    [One-click phone setup](#one-click-phone-setup-from-the-pc). Copies from
    your other devices always arrive automatically.
+
+## Sending files
+
+Files are sent to one device you choose. They aren't synced automatically, and
+there's no size limit. They go directly when both devices are on the same
+network or Tailscale, and through your server otherwise, end-to-end encrypted
+either way.
+
+- **From Windows:** right-click a file → **Send with VoidBridge** → pick a
+  device. On Windows 11 it's under **Show more options**. You can also drag
+  files onto a device in the app, or use its **Send file** button.
+- **From Android:** share a file from any app and pick **Send to a device**, or
+  tap one of your devices in the share sheet. The app also has a **Send a
+  file…** button.
+- **Received files** go to `Downloads\VoidBridge` on Windows (they're also put
+  on the clipboard, so you can paste them) and to `Download/VoidBridge` on
+  Android, with a notification you can tap to open the file. You can change
+  the folder in Settings on both.
+
+The right-click menu lists devices once they've connected at least once.
+Remove old ones in **Settings**.
 
 ## One-click phone setup (from the PC)
 

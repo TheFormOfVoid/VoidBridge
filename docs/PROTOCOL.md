@@ -37,7 +37,7 @@ The beacon fingerprint is the first 8 bytes of
 
 A message is `uint32be headerLen || header JSON || body`. The header carries
 `t` (the type) and the fields below. The body is raw bytes and is used only
-for encrypted clip content. The maximum is 40 MiB.
+for encrypted clip and file content. The maximum is 40 MiB.
 
 | t | fields | meaning |
 |---|---|---|
@@ -47,10 +47,29 @@ for encrypted clip content. The maximum is 40 MiB.
 | `clip` | `id`, `origin`, `origin_name`, `time` (unix ms), `ctype` (`text`/`image`), `mime` | body = nonce(12) ‖ AES-256-GCM(content key, plaintext, AAD) |
 | `peers` | `peers: [{id,name,kind,addrs}]` | peer exchange on direct links |
 | `devices` | `peers: [{id,name,kind}]` | server → device: the account's online devices |
+| `file_start` | `id`, `origin`, `origin_name`, `to` | body = sealed JSON `{name, size, mime}` |
+| `file_chunk` | same, plus `seq` (0, 1, 2, …) | body = sealed file bytes, at most 512 KiB |
+| `file_end` | same, `seq` = number of chunks | body = sealed hex SHA-256 of the whole file |
+| `file_ack` | `id`, `origin`, `to`, `error` (empty on success) | receiver → sender, not sealed |
 
 The clip AAD is
 `"voidbridge-clip-v2|" + id + "|" + origin + "|" + time + "|" + ctype + "|" + mime`,
 so none of those header fields can be altered.
+
+## Sending files
+
+Files go to one chosen device (`to`), not to everyone, and are never synced
+automatically. The sender uses a direct link to that device if it has one,
+otherwise the server. File messages are sealed like clips, with the AAD
+`"voidbridge-file-v2|" + t + "|" + id + "|" + origin + "|" + to + "|" + seq`,
+so chunks can't be reordered, swapped between transfers or redirected.
+
+The receiver checks that chunks arrive in order, that the total matches `size`
+and that the hash matches, then saves the file and sends `file_ack`. Any
+failure (refused, out of disk space, bad data) is sent back as a `file_ack`
+with `error`, and the sender stops. The sender gives up if no ack arrives
+within 60 s of `file_end`. The receiver drops a transfer after 60 s without
+data. There is no size limit.
 
 ## Direct links (TCP 47829)
 
@@ -97,7 +116,10 @@ minutes.
 
 The hub keeps each account's newest clip in memory. It forwards newer clips to
 the account's other devices and sends the newest clip to a device when it
-connects. It can't decrypt clips.
+connects. It can't decrypt clips. File messages aren't stored: the hub passes
+each one straight to the device named in `to`, in order. If that device isn't
+connected, or the connection to it fails, the hub answers with a `file_ack`
+carrying an error.
 
 ## Sync rules
 
