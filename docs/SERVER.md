@@ -7,6 +7,11 @@ clipboard is separate and end-to-end encrypted, so the server can't read it.
 It's one small program with no database to install. Any Raspberry Pi 3 or
 newer (or any Linux machine) is plenty.
 
+Running Home Assistant OS on the Pi? Install the server as an add-on instead,
+and skip the rest of this page: see
+[ha-addon/DOCS.md](../ha-addon/DOCS.md). It also covers reaching the server
+from the internet with DuckDNS.
+
 ## 1. Install Tailscale on the Pi
 
 Tailscale lets your devices reach the Pi from anywhere, without opening

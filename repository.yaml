@@ -1,0 +1,5 @@
+# Lets Home Assistant add this repository under Settings → Add-ons → Add-on
+# store → ⋮ → Repositories. The add-on itself is in ha-addon/.
+name: VoidBridge
+url: https://github.com/TheFormOfVoid/VoidBridge
+maintainer: TheFormOfVoid
