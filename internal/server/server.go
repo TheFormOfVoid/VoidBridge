@@ -40,6 +40,8 @@ type Server struct {
 	Name    string
 	Version string
 	Logf    func(string, ...any)
+	// NoConsole turns off the localhost console API (/api/local).
+	NoConsole bool
 
 	hub     hub
 	limiter limiter
@@ -75,7 +77,18 @@ func New(store *Store, signup string) *Server {
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// ServeHTTP refuses unencrypted requests from the internet: logins and
+// device tokens must never cross it in plain text. Plain HTTP stays available
+// on the home network and Tailscale (which encrypts by itself).
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.TLS == nil && !fromPrivate(r) {
+		writeErr(w, http.StatusForbidden, errors.New("this server only accepts encrypted connections from the internet: use https://"))
+		return
+	}
+	s.mux.ServeHTTP(w, r)
+}
+
+func fromPrivate(r *http.Request) bool { return protocol.PrivateIP(net.ParseIP(clientIP(r))) }
 
 // ---- helpers ----
 
@@ -135,7 +148,7 @@ func (s *Server) admin(h authed) http.HandlerFunc {
 // localOnly allows requests from the server machine itself, for the CLI.
 func (s *Server) localOnly(h authed) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if ip := net.ParseIP(clientIP(r)); ip == nil || !ip.IsLoopback() {
+		if ip := net.ParseIP(clientIP(r)); s.NoConsole || ip == nil || !ip.IsLoopback() {
 			writeErr(w, http.StatusForbidden, errors.New("only from the server itself"))
 			return
 		}
@@ -177,6 +190,13 @@ func (l *limiter) blocked(key string) bool {
 func (l *limiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.fails) > 10000 { // many different addresses: drop expired entries
+		for k, f := range l.fails {
+			if time.Since(f.first) > failWindow {
+				delete(l.fails, k)
+			}
+		}
+	}
 	f := l.fails[key]
 	if f == nil || time.Since(f.first) > failWindow {
 		f = &failure{first: time.Now()}
@@ -243,6 +263,12 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.limiter.blocked(ip) {
 		writeErr(w, http.StatusTooManyRequests, errors.New("too many attempts; try again later"))
+		return
+	}
+	// The first account becomes the admin and needs no invite, so it can't be
+	// claimed by a stranger who found the server on the internet first.
+	if !s.Store.HasUsers() && !fromPrivate(r) {
+		writeErr(w, http.StatusForbidden, errors.New("create the first account from your home network (or Tailscale); after that you can sign in from anywhere"))
 		return
 	}
 	u, err := s.Store.Register(c.Username, k, c.Invite, s.Signup != SignupOpen)

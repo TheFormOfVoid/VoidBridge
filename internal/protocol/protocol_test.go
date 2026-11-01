@@ -160,3 +160,15 @@ func TestHandshakeWrongGroup(t *testing.T) {
 		t.Fatalf("listener: %v", err)
 	}
 }
+
+func TestPrivateIP(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1": true, "::1": true, "192.168.1.20": true, "10.0.0.5": true, "172.20.1.1": true,
+		"100.101.102.103": true, "fd7a:115c:a1e0::1": true, "fe80::1": true, "169.254.3.4": true,
+		"8.8.8.8": false, "100.128.0.1": false, "172.32.0.1": false, "2001:4860::8888": false, "": false,
+	} {
+		if got := PrivateIP(net.ParseIP(addr)); got != want {
+			t.Errorf("PrivateIP(%s) = %v", addr, got)
+		}
+	}
+}

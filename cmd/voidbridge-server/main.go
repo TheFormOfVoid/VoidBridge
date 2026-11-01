@@ -3,6 +3,7 @@
 // between each account's devices.
 //
 //	voidbridge-server [serve] [-listen :47831] [-data DIR] [-signup invite|open]
+//	                  [-domain NAME | -tls-cert FILE -tls-key FILE]
 //	voidbridge-server invite [-uses N] [-days D] [-note TEXT]
 //	voidbridge-server users
 //	voidbridge-server admin NAME        (make an account admin)
@@ -11,15 +12,25 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/TheFormOfVoid/VoidBridge/internal/protocol"
 	"github.com/TheFormOfVoid/VoidBridge/internal/server"
@@ -58,11 +69,26 @@ func serve(args []string) {
 	listen := fs.String("listen", fmt.Sprintf(":%d", protocol.ServerPort), "address to listen on")
 	data := fs.String("data", defaultData(), "directory for the account database")
 	signup := fs.String("signup", server.SignupInvite, `who can create accounts: "invite" (first account is free and becomes admin, then invite codes only) or "open"`)
-	cert := fs.String("tls-cert", "", "TLS certificate file (optional; not needed over Tailscale)")
-	key := fs.String("tls-key", "", "TLS key file")
+	domain := fs.String("domain", "", "get a free HTTPS certificate for this domain from Let's Encrypt (port 443 on the internet must reach this server)")
+	email := fs.String("email", "", "optional contact email for Let's Encrypt")
+	cert := fs.String("tls-cert", "", "HTTPS certificate file (e.g. from Home Assistant's /ssl); reloaded when it changes")
+	key := fs.String("tls-key", "", "HTTPS key file")
+	options := fs.String("options", "", "read settings from a Home Assistant add-on options file")
+	noConsole := fs.Bool("no-console", false, "turn off the localhost console commands (invite, users, ...)")
 	fs.Parse(args)
+	if *options != "" {
+		if err := applyOptions(*options, listen, signup, domain, email, cert, key); err != nil {
+			log.Fatalf("reading %s: %v", *options, err)
+		}
+	}
 	if *signup != server.SignupInvite && *signup != server.SignupOpen {
 		log.Fatalf("-signup must be invite or open")
+	}
+	if (*cert == "") != (*key == "") {
+		log.Fatalf("-tls-cert and -tls-key go together")
+	}
+	if *domain != "" && *cert != "" {
+		log.Fatalf("use either -domain (Let's Encrypt) or -tls-cert/-tls-key, not both")
 	}
 
 	st, err := server.OpenStore(*data)
@@ -71,17 +97,128 @@ func serve(args []string) {
 	}
 	s := server.New(st, *signup)
 	s.Version = version
-	hs := &http.Server{Addr: *listen, Handler: s, ReadHeaderTimeout: 10 * time.Second}
+	s.NoConsole = *noConsole
+
+	var tlsCfg *tls.Config
+	switch {
+	case *domain != "":
+		m := &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(*domain),
+			Cache:      autocert.DirCache(filepath.Join(*data, "certs")),
+			Email:      *email,
+		}
+		tlsCfg = m.TLSConfig() // answers Let's Encrypt's TLS-ALPN-01 check on this port
+		log.Printf("HTTPS for %s with a Let's Encrypt certificate (the first connection fetches it)", *domain)
+	case *cert != "":
+		kp := &certFile{cert: *cert, key: *key}
+		if _, err := kp.get(nil); err != nil {
+			log.Fatalf("loading the certificate: %v", err)
+		}
+		tlsCfg = &tls.Config{GetCertificate: kp.get}
+		log.Printf("HTTPS with the certificate in %s", *cert)
+	default:
+		log.Printf("No HTTPS certificate: only devices on the home network and Tailscale can connect.")
+	}
+	if tlsCfg != nil {
+		tlsCfg.MinVersion = tls.VersionTLS12
+	}
+
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	hs := &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, TLSConfig: tlsCfg}
 	log.Printf("VoidBridge server %s listening on %s (data: %s, signup: %s)", version, *listen, *data, *signup)
 	if !st.HasUsers() {
-		log.Printf("No accounts yet: the first account created from an app becomes the admin.")
+		log.Printf("No accounts yet: the first account, created from an app on your home network, becomes the admin.")
 	}
-	if *cert != "" {
-		err = hs.ListenAndServeTLS(*cert, *key)
-	} else {
-		err = hs.ListenAndServe()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutting down")
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		hs.Shutdown(sctx)
+	}()
+	err = hs.Serve(newDualListener(ln, tlsCfg))
+	st.Close()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
 	}
-	log.Fatal(err)
+}
+
+// certFile serves a certificate from files and picks up renewals (Home
+// Assistant's Let's Encrypt and DuckDNS add-ons replace them in place).
+type certFile struct {
+	cert, key string
+	mu        sync.Mutex
+	kp        *tls.Certificate
+	mod       time.Time
+	checked   time.Time
+}
+
+func (c *certFile) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.kp != nil && time.Since(c.checked) < time.Minute {
+		return c.kp, nil
+	}
+	c.checked = time.Now()
+	fi, err := os.Stat(c.cert)
+	if err == nil && c.kp != nil && !fi.ModTime().After(c.mod) {
+		return c.kp, nil
+	}
+	kp, lerr := tls.LoadX509KeyPair(c.cert, c.key)
+	if lerr != nil {
+		if c.kp != nil {
+			log.Printf("reloading the certificate: %v (keeping the old one)", lerr)
+			return c.kp, nil
+		}
+		return nil, lerr
+	}
+	c.kp = &kp
+	if err == nil {
+		c.mod = fi.ModTime()
+	}
+	return c.kp, nil
+}
+
+// applyOptions reads a Home Assistant add-on's /data/options.json.
+func applyOptions(path string, listen, signup, domain, email, cert, key *string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var o struct {
+		Port     int    `json:"port"`
+		Signup   string `json:"signup"`
+		Domain   string `json:"domain"`
+		Email    string `json:"email"`
+		Certfile string `json:"certfile"`
+		Keyfile  string `json:"keyfile"`
+	}
+	if err := json.Unmarshal(b, &o); err != nil {
+		return err
+	}
+	if o.Port != 0 {
+		*listen = fmt.Sprintf(":%d", o.Port)
+	}
+	if o.Signup != "" {
+		*signup = o.Signup
+	}
+	*domain, *email = strings.TrimSpace(o.Domain), strings.TrimSpace(o.Email)
+	inSSL := func(f string) string {
+		f = strings.TrimSpace(f)
+		if f == "" || filepath.IsAbs(f) {
+			return f
+		}
+		return filepath.Join("/ssl", f)
+	}
+	*cert, *key = inSSL(o.Certfile), inSSL(o.Keyfile)
+	return nil
 }
 
 // console talks to the running server's localhost-only endpoints.

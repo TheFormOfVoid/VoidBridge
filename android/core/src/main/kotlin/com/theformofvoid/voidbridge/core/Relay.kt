@@ -11,12 +11,58 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.IOException
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
+import java.net.SocketAddress
+import javax.net.SocketFactory
 import java.net.URI
 import java.util.Base64
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class ServerException(msg: String, val status: Int = 0) : IOException(msg)
+
+/** A plain http:// address that leads to the internet, where the login would travel unencrypted. */
+class InsecureServerException : IOException(
+    "this server is on the internet, so VoidBridge only connects to it with HTTPS: use https:// in the address",
+)
+
+/** Home network or Tailscale; plain HTTP is only allowed to these. Mirrors protocol.PrivateIP in Go. */
+fun isPrivateAddress(a: InetAddress): Boolean {
+    if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress) return true
+    val b = a.address
+    return when (a) {
+        is Inet4Address -> (b[0].toInt() and 0xff) == 100 && (b[1].toInt() and 0xc0) == 64 // 100.64/10 (Tailscale)
+        is Inet6Address -> (b[0].toInt() and 0xfe) == 0xfc // fc00::/7
+        else -> false
+    }
+}
+
+/**
+ * Makes sockets that refuse to connect anywhere but the home network or
+ * Tailscale. The check runs on the address actually dialed, so a name that
+ * resolves elsewhere (or a literal IP, which skips DNS) can't get round it.
+ */
+private object PrivateOnlySockets : SocketFactory() {
+    private fun checked() = object : Socket() {
+        override fun connect(endpoint: SocketAddress, timeout: Int) {
+            val a = (endpoint as? InetSocketAddress)?.address
+            if (a == null || !isPrivateAddress(a)) throw InsecureServerException()
+            super.connect(endpoint, timeout)
+        }
+    }
+    override fun createSocket(): Socket = checked()
+    override fun createSocket(host: String, port: Int): Socket = checked().apply { connect(InetSocketAddress(host, port)) }
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        checked().apply { bind(InetSocketAddress(localHost, localPort)); connect(InetSocketAddress(host, port)) }
+    override fun createSocket(host: InetAddress, port: Int): Socket = checked().apply { connect(InetSocketAddress(host, port)) }
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
+        checked().apply { bind(InetSocketAddress(localAddress, localPort)); connect(InetSocketAddress(address, port)) }
+}
 
 /** Account calls to a VoidBridge server. Blocking; call off the main thread. */
 class ServerApi(val base: String, var token: String = "") {
@@ -29,7 +75,7 @@ class ServerApi(val base: String, var token: String = "") {
             .apply { if (token.isNotEmpty()) header("Authorization", "Bearer $token") }
             .build()
         try {
-            http.newCall(req).execute().use { resp ->
+            clientFor(base, http).newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 val o = try { JSONObject(text.ifEmpty { "{}" }) } catch (_: Exception) { JSONObject() }
                 if (!resp.isSuccessful) throw ServerException(o.optString("error").ifEmpty { "server error ${resp.code}" }, resp.code)
@@ -37,6 +83,8 @@ class ServerApi(val base: String, var token: String = "") {
             }
         } catch (e: ServerException) {
             throw e
+        } catch (e: InsecureServerException) {
+            throw ServerException(e.message!!)
         } catch (e: IOException) {
             throw ServerException("can't reach the server (${e.message})")
         }
@@ -68,6 +116,10 @@ class ServerApi(val base: String, var token: String = "") {
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
 
+        /** For plain http:// only the home network and Tailscale are reachable (and no proxy). */
+        fun clientFor(base: String, client: OkHttpClient): OkHttpClient =
+            if (base.startsWith("http://")) client.newBuilder().proxy(Proxy.NO_PROXY).socketFactory(PrivateOnlySockets).build() else client
+
         /** "pi", "pi:47831" or "https://x" → base URL. */
         fun normalizeUrl(s: String): String {
             var t = s.trim().trimEnd('/')
@@ -97,7 +149,7 @@ class RelayClient(
         fun onUnauthorized()
     }
 
-    private val client = ServerApi.http.newBuilder()
+    private val client = ServerApi.clientFor(base, ServerApi.http).newBuilder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(20, TimeUnit.SECONDS) // also detects dead connections
         .build()
@@ -176,7 +228,7 @@ class RelayClient(
                     listener.onUnauthorized()
                     return
                 }
-                ended("can't reach the server")
+                ended(if (t is InsecureServerException) t.message else "can't reach the server")
             }
 
             private fun ended(err: String?) {

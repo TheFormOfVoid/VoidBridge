@@ -3,10 +3,15 @@ package server_test
 import (
 	"bytes"
 	"context"
+	cryptotls "crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,5 +302,60 @@ func TestFileReceiverDisconnectsMidTransfer(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("sender was left waiting after the receiver disconnected")
+	}
+}
+
+// Requests as they'd arrive from a given address, optionally over HTTPS.
+func call(s http.Handler, method, path, from string, tls bool, body any) *httptest.ResponseRecorder {
+	b, _ := json.Marshal(body)
+	r := httptest.NewRequest(method, path, bytes.NewReader(b))
+	r.RemoteAddr = from + ":5000"
+	if tls {
+		r.TLS = &cryptotls.ConnectionState{}
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	return w
+}
+
+func TestInternetNeedsHTTPS(t *testing.T) {
+	srv, _ := setup(t)
+	for _, from := range []string{"8.8.8.8", "2001:4860::8888"} {
+		if w := call(srv, "GET", "/api/info", from, false, nil); w.Code != http.StatusForbidden {
+			t.Errorf("plain HTTP from %s: %d", from, w.Code)
+		}
+		if w := call(srv, "GET", "/api/info", from, true, nil); w.Code != 200 {
+			t.Errorf("HTTPS from %s: %d", from, w.Code)
+		}
+	}
+	for _, from := range []string{"127.0.0.1", "192.168.1.5", "100.100.1.2", "fd7a:115c:a1e0::5"} {
+		if w := call(srv, "GET", "/api/info", from, false, nil); w.Code != 200 {
+			t.Errorf("plain HTTP from %s: %d", from, w.Code)
+		}
+	}
+}
+
+func TestFirstAccountOnlyFromHome(t *testing.T) {
+	srv, _ := setup(t)
+	creds := func(user string, invite string) server.Credentials {
+		k := keys(user, "password1")
+		return server.Credentials{Username: user, AuthKey: base64.StdEncoding.EncodeToString(k.Auth), Invite: invite, DeviceID: "d-" + user}
+	}
+	if w := call(srv, "POST", "/api/register", "8.8.8.8", true, creds("mallory", "")); w.Code != http.StatusForbidden {
+		t.Fatalf("stranger made the first account: %d %s", w.Code, w.Body)
+	}
+	if w := call(srv, "POST", "/api/register", "192.168.1.5", false, creds("owner", "")); w.Code != 200 {
+		t.Fatalf("owner: %d %s", w.Code, w.Body)
+	}
+	// Now an invite is needed, and a taken name isn't revealed without one.
+	if w := call(srv, "POST", "/api/register", "8.8.8.8", true, creds("owner", "nope")); !strings.Contains(w.Body.String(), "invite") {
+		t.Fatalf("taken name probed without an invite: %s", w.Body)
+	}
+	inv, err := srv.Store.CreateInvite("owner", 1, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := call(srv, "POST", "/api/register", "8.8.8.8", true, creds("friend", inv.Code)); w.Code != 200 {
+		t.Fatalf("invited friend over HTTPS: %d %s", w.Code, w.Body)
 	}
 }

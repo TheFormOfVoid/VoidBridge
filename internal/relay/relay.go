@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -27,6 +28,28 @@ import (
 
 // ErrUnauthorized means the token was revoked or the account disabled.
 var ErrUnauthorized = errors.New("signed out by the server")
+
+// ErrInsecure means a plain http:// address leads to the internet, where the
+// login and device token would travel unencrypted.
+var ErrInsecure = errors.New("this server is on the internet, so VoidBridge only connects to it with HTTPS: use https:// in the address")
+
+// clientFor returns an HTTP client for a server address. For plain http://
+// it only connects to the home network or Tailscale; the check runs on the
+// address actually dialed, so a name that resolves elsewhere can't get round it.
+func clientFor(base string, timeout time.Duration) *http.Client {
+	if !strings.HasPrefix(base, "http://") {
+		return &http.Client{Timeout: timeout}
+	}
+	d := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil || !protocol.PrivateIP(net.ParseIP(host)) {
+			return ErrInsecure
+		}
+		return nil
+	}}
+	// No proxy either: it would hide where the request really goes.
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: d.DialContext}}
+}
 
 // NormalizeURL turns "pi", "pi:47831" or "https://x" into a base URL.
 func NormalizeURL(s string) (string, error) {
@@ -59,7 +82,7 @@ func (a *API) client() *http.Client {
 	if a.HTTP != nil {
 		return a.HTTP
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return clientFor(a.Base, 15*time.Second)
 }
 
 func (a *API) do(method, path string, body, out any) error {
@@ -79,6 +102,9 @@ func (a *API) do(method, path string, body, out any) error {
 		req.Header.Set("Authorization", "Bearer "+a.Token)
 	}
 	resp, err := a.client().Do(req)
+	if errors.Is(err, ErrInsecure) {
+		return ErrInsecure
+	}
 	if err != nil {
 		return fmt.Errorf("can't reach the server: %w", err)
 	}
@@ -257,8 +283,12 @@ func (c *Client) session(ctx context.Context) error {
 	dctx, dcancel := context.WithTimeout(ctx, 10*time.Second)
 	ws, resp, err := websocket.Dial(dctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + c.Token}},
+		HTTPClient: clientFor(c.Base, 0),
 	})
 	dcancel()
+	if errors.Is(err, ErrInsecure) {
+		return ErrInsecure
+	}
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
 			return ErrUnauthorized

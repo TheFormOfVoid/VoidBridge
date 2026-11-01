@@ -146,9 +146,6 @@ func (s *Store) Register(name string, authKey []byte, invite string, needInvite 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.d.Users[name]; ok {
-		return nil, ErrTaken
-	}
 	first := len(s.d.Users) == 0
 	var inv *Invite
 	if needInvite && !first {
@@ -156,6 +153,10 @@ func (s *Store) Register(name string, authKey []byte, invite string, needInvite 
 		if inv == nil || inv.UsesLeft <= 0 || (!inv.Expires.IsZero() && time.Now().After(inv.Expires)) {
 			return nil, ErrBadInvite
 		}
+	}
+	// Only after the invite check, so usernames can't be probed without one.
+	if _, ok := s.d.Users[name]; ok {
+		return nil, ErrTaken
 	}
 	u := &User{Name: name, AuthHash: hashHex(authKey), Admin: first, Created: time.Now()}
 	s.d.Users[name] = u
