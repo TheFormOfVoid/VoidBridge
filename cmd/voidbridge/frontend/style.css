@@ -255,3 +255,6 @@ dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top
 #drop-hint { margin-top: 10px; }
 .update-banner { margin: 0 0 16px; }
 .update-banner a { color: var(--accent); font-weight: 600; }
+
+/* Hidden in the tray: no animations, so the WebView stops drawing frames. */
+html.bg *, html.bg *::before, html.bg *::after { animation: none !important; transition: none !important; }

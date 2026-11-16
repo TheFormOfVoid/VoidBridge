@@ -571,13 +571,39 @@ function wire() {
   window.runtime?.EventsOn?.("state", (s) => {
     const histChanged = state && s.historyLen !== state.historyLen;
     state = s;
+    if (bg) {
+      stale = true; // drawn when the window comes back
+      return;
+    }
     render();
     if (page === "history" && histChanged) loadHistory();
   });
+  document.addEventListener("visibilitychange", () => setBg(document.hidden));
+  // WebView2 doesn't report the page as hidden when the window goes to the
+  // tray, so the app says so itself.
+  window.runtime?.EventsOn?.("window-visible", (v) => setBg(!v));
   setInterval(() => {
+    if (bg) return;
     if (page === "phone") loadAdb();
     if (page === "devices" && state?.lastSync) render(); // keep "x min ago" fresh
   }, 4000);
+}
+
+// ---- in the tray ----
+
+// While the window is hidden, nothing animates or redraws, so the WebView's
+// GPU process can go idle.
+let bg = false;
+let stale = false;
+function setBg(v) {
+  if (v === bg) return;
+  bg = v;
+  document.documentElement.classList.toggle("bg", v);
+  if (!v && stale && state) {
+    stale = false;
+    render();
+    if (page === "history") loadHistory();
+  }
 }
 
 // Wails injects window.go asynchronously; wait for it.
@@ -586,6 +612,7 @@ function wire() {
     api = window.go.main.App;
     if (window.runtime) document.documentElement.classList.add("wails");
     wire();
+    api.WindowVisible?.().then((v) => setBg(!v)).catch(() => {});
     refresh();
   } else {
     setTimeout(boot, 30);

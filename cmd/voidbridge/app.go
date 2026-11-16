@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -40,6 +41,11 @@ type App struct {
 	thumbs  map[string]string
 
 	upd updater
+
+	// visible is whether the window is on screen. While it isn't, the page
+	// pauses its animations and timers so WebView2 stops drawing frames.
+	visible  atomic.Bool
+	quitting atomic.Bool
 
 	emitMu    sync.Mutex
 	emitTimer *time.Timer
@@ -515,8 +521,35 @@ func (a *App) AdminDeleteUser(name string) error           { return a.api().Dele
 
 // ---- window ----
 
+func (a *App) setVisible(v bool) {
+	a.visible.Store(v)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "window-visible", v)
+	}
+}
+
+// WindowVisible tells the page, when it loads, whether it's on screen (the
+// app may have started hidden in the tray).
+func (a *App) WindowVisible() bool { return a.visible.Load() }
+
 // Hide sends the window to the tray.
-func (a *App) Hide() { runtime.WindowHide(a.ctx) }
+func (a *App) Hide() {
+	if a.ctx == nil {
+		return
+	}
+	a.setVisible(false)
+	runtime.WindowHide(a.ctx)
+}
+
+// beforeClose turns the window's close button into "hide to tray"; only Quit
+// really exits.
+func (a *App) beforeClose(context.Context) bool {
+	if a.quitting.Load() {
+		return false
+	}
+	go a.Hide()
+	return true
+}
 
 // Show brings the window forward.
 func (a *App) Show() {
@@ -527,10 +560,12 @@ func (a *App) Show() {
 	runtime.WindowUnminimise(a.ctx)
 	runtime.WindowSetAlwaysOnTop(a.ctx, true)
 	runtime.WindowSetAlwaysOnTop(a.ctx, false)
+	a.setVisible(true)
 }
 
 // Quit exits the app.
 func (a *App) Quit() {
+	a.quitting.Store(true)
 	a.svc.Stop()
 	runtime.Quit(a.ctx)
 }

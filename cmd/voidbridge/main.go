@@ -70,18 +70,20 @@ func main() {
 
 	svc := NewService(cfg)
 	app := NewApp(cfg, svc, logPath)
+	startHidden := (*hidden || *sendTo != "") && !first
+	app.visible.Store(!startHidden)
 	go runTray(app)
 
 	err = wails.Run(&options.App{
-		Title:             "VoidBridge",
-		Width:             1000,
-		Height:            700,
-		MinWidth:          780,
-		MinHeight:         540,
-		StartHidden:       (*hidden || *sendTo != "") && !first,
-		HideWindowOnClose: true,
-		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
-		AssetServer:       &assetserver.Options{Assets: assets},
+		Title:            "VoidBridge",
+		Width:            1000,
+		Height:           700,
+		MinWidth:         780,
+		MinHeight:        540,
+		StartHidden:      startHidden,
+		OnBeforeClose:    app.beforeClose, // close hides to the tray, telling the page it's hidden
+		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		AssetServer:      &assetserver.Options{Assets: assets},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
 			if *sendTo != "" {
